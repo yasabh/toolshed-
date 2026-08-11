@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block content %}
+{# This claim is load-bearing, so it has to stay true: compression runs in a
+   Web Worker on the user's own machine (static/gs-worker.js). There is no
+   upload endpoint behind this page — if one is ever added, this sentence has to
+   change in the same commit. #}
+<p class="lede">Pick one or more PDFs. All files are prosessed and kept ONLY in this browser.</p>
+
+{# No entry animation on this block: it re-renders on every failed attempt, and
+   an animation replays each time, turning a correction into a wait. #}
+{% if error %}<p class="err" role="alert">{{ error }}</p>{% endif %}
+
+{# The whole tool is the script. Without it the page is a file picker that does
+   nothing, so say so rather than letting someone wonder. #}
+<noscript><p class="err">This tool needs JavaScript — the compression runs in
+your browser, not on the server.</p></noscript>
+
+<form id="shrink" class="card" data-max-bytes="{{ max_bytes }}"
+      data-max-files="{{ max_files }}">
+
+  <div class="field">
+    {# Label above the field, not a placeholder — a placeholder disappears
+       exactly when someone wants to check what they picked. #}
+    <label for="file">PDF files</label>
+    {# Not a second <label>: the input is invisible but covers the whole box, so
+       a click anywhere in it already reaches the control. #}
+    <div class="drop" id="drop">
+      <input id="file" name="file" type="file" accept="application/pdf,.pdf"
+             multiple required>
+      <span class="drop-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7.5 8.5 12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+      </span>
+      <span class="drop-text" id="dropText">Choose files, or drop them here</span>
+      <span class="hint">Up to {{ max_files }} files, {{ max_mb }} MB each</span>
+    </div>
+
+    {# One chip per picked file, filled in by pdf.js. Outside the drop box, or
+       the invisible file input covering that box would swallow the clicks on
+       each chip's remove button. #}
+    <ul class="picks" id="picks"></ul>
+  </div>
+
+  {# Drawn by pdf.js from static/presets.js, so the labels and the Ghostscript
+     flags behind them come from one file and cannot drift. Named for the job —
+     nobody picks a compressor by dpi — with the numbers underneath for whoever
+     does care. #}
+  <fieldset class="field">
+    <legend>Target quality</legend>
+    <div class="choices" id="choices"></div>
+  </fieldset>
+
+  <button type="submit" class="primary" id="go" disabled>Compress</button>
+  <p class="fineprint">Only images are touched. Text and vectors are left
+  exactly as they are, so a PDF that is mostly text will barely change size.</p>
+</form>
+
+{# One row per file, filled in by pdf.js as each one finishes. #}
+<section class="results" id="results" hidden aria-live="polite">
+  <div class="results-head">
+    <h2>Results</h2>
+    <span class="results-total" id="resultsTotal"></span>
+  </div>
+  <ul class="result-list" id="resultList"></ul>
+</section>
+
+<template id="pickTemplate">
+  <li class="pick">
+    <span class="pick-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></svg>
+    </span>
+    <span class="pick-name"></span>
+    <span class="pick-size"></span>
+    <button type="button" class="pick-drop" aria-label="Remove">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </li>
+</template>
+
+<template id="rowTemplate">
+  <li class="row">
+    {# Spinner while it works, then a tick or a cross. The bar this replaced
+       drew how much of the original was *left*, which everyone read as a
+       progress bar stuck near zero. #}
+    <span class="row-mark" aria-hidden="true"></span>
+    <span class="row-name"></span>
+    <a class="row-get" download hidden>Download</a>
+    <span class="row-status"></span>
+    <span class="row-detail"></span>
+  </li>
+</template>
+
+{# AGPL: the Ghostscript build is served to the browser, which is distribution,
+   so its licence has to be reachable from where it is offered. #}
+<p class="colophon">Uses
+  <a target="blank" href="https://github.com/sharevb/ghostscript-wasm-esm">ghostscript-wasm-esm</a>,
+  <a target="blank" href="{{ url('/static/vendor/LICENSE') }}">AGPL-3.0</a>.</p>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url('/static/pdf.js') }}"></script>
+{% endblock %}

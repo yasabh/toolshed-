@@ -1,0 +1,8 @@
+ghostscript-wasm-esm@1.0.1
+https://registry.npmjs.org/ghostscript-wasm-esm/-/ghostscript-wasm-esm-1.0.1.tgz
+AGPL-3.0 — see LICENSE in this directory
+
+d03632bd52aa79bbd081b026e325fb726954d1a55c79538169da7dd846c43c60  gs.mjs
+b07b853d459b3aafe6e1247aaaf9a6386dd107f4f215a3bd7bb3d4272a212930  gs.wasm
+546deb1e8cca0bb91dae3bba5f50c535fbe8764e5528399ffaca6070cb4b7ad2  browser.js
+796c9fd9fe0da3a3397a48e86cc3162c2f7ae5261ea128b4416ed86a49b5044b  LICENSE

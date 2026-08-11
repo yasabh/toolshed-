@@ -1,0 +1,271 @@
+/* Theme: dark by default; "system" follows the OS; explicit light/dark win.
+   This block is tv-webui's, verbatim — same origin, same `theme` key, so a user
+   who picks light mode in /tvs or /login sees this page light too. Drift here is
+   immediately visible, so do not "tidy" it. */
+:root { color-scheme: light dark; --bg:#111; --fg:#eee; --muted:#888;
+        --field-bg:#222; --field-fg:#eee; --field-br:#444; --accent:#4a90d9;
+        --backdrop:rgba(0,0,0,.8); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) { --bg:#efefef; --fg:#1a1a1a; --muted:#666;
+        --field-bg:#fff; --field-fg:#1a1a1a; --field-br:#ddd; }
+}
+/* Pin color-scheme to the chosen theme, or the browser keeps drawing form
+   controls (checkboxes etc.) in the OS scheme — dark boxes on a light UI. */
+:root[data-theme="light"] { color-scheme:light; --bg:#efefef; --fg:#1a1a1a; --muted:#666;
+        --field-bg:#fff; --field-fg:#1a1a1a; --field-br:#ddd; }
+:root[data-theme="dark"]  { color-scheme:dark; --bg:#111; --fg:#eee; --muted:#888;
+        --field-bg:#222; --field-fg:#eee; --field-br:#444; }
+
+*, *::before, *::after { box-sizing:border-box; }
+body { margin:0; font-family:system-ui,sans-serif;
+       background:var(--bg); color:var(--fg); }
+
+/* One focus treatment for the whole app: a 3px ring, never a border-colour
+   shift. A shift is invisible on a field that already has a coloured border,
+   and it moves the layout by nothing so nobody notices it moved. */
+:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+
+/* ---- Shell: sidebar + pane ------------------------------------------------ */
+.shell { display:flex; min-height:100vh; }
+
+.sidebar { flex:none; width:232px; display:flex; flex-direction:column; gap:4px;
+           padding:14px 10px; border-right:1px solid var(--field-br);
+           background:color-mix(in srgb, var(--fg) 4%, var(--bg));
+           transition:width .18s; }
+/* Collapsed keeps the icons and drops the labels — the nav stays usable and the
+   app's structure stays on screen. It is not a hamburger. */
+:root[data-sidebar="collapsed"] .sidebar { width:60px; }
+:root[data-sidebar="collapsed"] .nav-label,
+:root[data-sidebar="collapsed"] .brand-name { display:none; }
+:root[data-sidebar="collapsed"] .collapse-btn svg { transform:scaleX(-1); }
+
+.brand { display:flex; align-items:center; gap:10px; padding:8px 10px 14px;
+         font-size:15px; font-weight:600; letter-spacing:-.01em; }
+.brand-mark { display:grid; place-items:center; flex:none; width:24px; height:24px;
+              color:var(--accent); }
+.brand-mark svg { width:20px; height:20px; }
+
+.sidebar nav { display:flex; flex-direction:column; gap:3px; }
+.nav-item { display:flex; align-items:center; gap:11px; padding:10px;
+            border-radius:10px; font-size:13.5px; font-weight:500;
+            color:var(--fg); text-decoration:none; white-space:nowrap;
+            transition:background .15s, color .15s; }
+.nav-item:hover { background:var(--field-bg); }
+/* The current tool, marked so a deep link is legible without reading the URL. */
+.nav-item.on { background:color-mix(in srgb, var(--accent) 16%, var(--field-bg));
+               color:var(--fg); font-weight:600;
+               box-shadow:inset 2px 0 0 var(--accent); }
+.nav-icon { display:grid; place-items:center; flex:none; width:20px; height:20px; }
+.nav-icon svg { width:19px; height:19px; }
+.nav-item.on .nav-icon { color:var(--accent); }
+
+.collapse-btn { margin-top:auto; display:flex; align-items:center; gap:11px;
+                padding:10px; border:0; border-radius:10px; cursor:pointer;
+                background:none; color:var(--muted); font:500 13px system-ui,sans-serif;
+                white-space:nowrap; transition:background .15s, color .15s; }
+.collapse-btn:hover { background:var(--field-bg); color:var(--fg); }
+.collapse-btn svg { transition:transform .18s; }
+
+.pane { flex:1; min-width:0; display:flex; flex-direction:column; }
+
+/* Header, .spacer and .theme-toggle are tv-webui's, verbatim. */
+header { padding:16px 20px; font-size:18px; font-weight:600;
+         display:flex; align-items:center; gap:12px; }
+header .spacer { flex:1; }
+/* The page's only <h1>, living in the header bar rather than repeated below it.
+   Reset because an <h1> arrives with browser margins and a size of its own. */
+.page-title { margin:0; font-size:clamp(18px,2.4vw,22px); font-weight:600;
+              letter-spacing:-.015em; }
+.whoami { font-size:12.5px; font-weight:400; color:var(--muted); }
+
+.theme-toggle { display:grid; place-items:center; width:38px; height:38px;
+                padding:0; border-radius:999px; cursor:pointer;
+                background:var(--field-bg); border:1px solid var(--field-br);
+                color:var(--fg); transition:background .18s, transform .1s; }
+.theme-toggle:hover { background:var(--accent); color:#fff; }
+.theme-toggle:active { transform:scale(.92); }
+.theme-toggle svg { width:19px; height:19px; display:none; }
+.theme-toggle[data-val="light"] .i-light,
+.theme-toggle[data-val="dark"]  .i-dark { display:block; }
+
+.content { padding:6px 20px 32px; }
+.lede { margin:0 0 22px; font-size:14px; line-height:1.55; color:var(--muted); }
+
+/* ---- Cards and fields ----------------------------------------------------- */
+.card { padding:20px; border:1px solid var(--field-br); border-radius:14px;
+        background:color-mix(in srgb, var(--fg) 3%, var(--bg)); }
+.field { margin:0 0 20px; padding:0; border:0; }
+.field > label, .field > legend { display:block; padding:0; margin:0 0 8px;
+        font-size:13px; font-weight:600; }
+.hint { font-size:12px; font-weight:400; color:var(--muted); }
+
+/* File picker. The real input covers the box so a click anywhere opens it and
+   the keyboard still reaches it; JS adds .has-file once something is chosen. */
+.drop { position:relative; display:flex; flex-direction:column; align-items:center;
+        gap:6px; padding:26px 18px; border:1.5px dashed var(--field-br);
+        border-radius:12px; background:var(--field-bg); cursor:pointer;
+        text-align:center; transition:border-color .15s, background .15s; }
+.drop:hover, .drop.drag { border-color:var(--accent);
+        background:color-mix(in srgb, var(--accent) 8%, var(--field-bg)); }
+.drop input { position:absolute; inset:0; width:100%; height:100%;
+        opacity:0; cursor:pointer; }
+/* The input is invisible, so its focus ring would be too — draw it on the box. */
+.drop:has(input:focus-visible) { outline:3px solid var(--accent); outline-offset:2px; }
+.drop-icon { color:var(--muted); }
+.drop-icon svg { width:26px; height:26px; }
+.drop-text { font-size:13.5px; font-weight:500; word-break:break-all; }
+.drop.has-file .drop-icon { color:var(--accent); }
+
+/* Target quality: boxed radio chips, the same shape as tv-webui's .fcheck rows.
+   Drawn by pdf.js from presets.js. */
+.choices { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+.choice { display:flex; align-items:flex-start; gap:10px; padding:12px 14px;
+          border-radius:11px; background:var(--field-bg); cursor:pointer;
+          transition:background .15s; }
+.choice:hover { background:color-mix(in srgb, var(--fg) 10%, var(--field-bg)); }
+.choice:has(input:checked) { background:color-mix(in srgb, var(--accent) 15%, var(--field-bg)); }
+.choice:has(input:focus-visible) { outline:3px solid var(--accent); outline-offset:2px; }
+/* Drawn by hand: the native radio follows the OS color-scheme and shows up dark
+   on the light theme. Same trick as tv-webui's checkboxes. */
+.choice input { appearance:none; -webkit-appearance:none; flex:none; margin:2px 0 0;
+          width:16px; height:16px; border-radius:50%; cursor:pointer;
+          border:2px solid var(--field-br); background:var(--field-bg);
+          display:grid; place-items:center; transition:border-color .12s; }
+.choice input:checked { border-color:var(--accent); }
+.choice input:checked::after { content:""; width:8px; height:8px; border-radius:50%;
+          background:var(--accent); }
+.choice-body { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.choice-name { font-size:13.5px; font-weight:600; }
+.choice-desc { font-size:12px; line-height:1.4; color:var(--muted); }
+/* The numbers, for whoever wants them. Tabular so the two presets' figures line
+   up against each other when read side by side. */
+.choice-detail { font-size:11.5px; line-height:1.4; color:var(--muted);
+          opacity:.8; font-variant-numeric:tabular-nums; }
+
+/* One chip per picked file. Sits below the drop box rather than inside it: the
+   file input covers that box invisibly and would eat every click meant for a
+   chip's remove button. */
+.picks { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 0; padding:0;
+         list-style:none; }
+.picks:empty { display:none; }
+.pick { display:inline-flex; align-items:center; gap:8px; max-width:100%;
+        padding:7px 8px 7px 11px; border-radius:10px; font-size:12.5px;
+        background:var(--field-bg); border:1px solid var(--field-br); }
+.pick-icon { display:grid; place-items:center; flex:none; color:var(--accent); }
+.pick-icon svg { width:15px; height:15px; }
+.pick-name { min-width:0; overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; font-weight:500; }
+.pick-size { flex:none; color:var(--muted); }
+.pick-drop { display:grid; place-items:center; flex:none; width:20px; height:20px;
+             padding:0; border:0; border-radius:6px; cursor:pointer;
+             background:none; color:var(--muted); transition:background .15s, color .15s; }
+.pick-drop:hover { background:#e05555; color:#fff; }
+.pick-drop svg { width:12px; height:12px; }
+/* Flagged where the file is, rather than only at submit. */
+.pick.too-big { border-color:#e05555; background:#e0555518; }
+.pick.too-big .pick-size { color:#ff6b6b; font-weight:600; }
+
+
+.primary { display:inline-flex; align-items:center; justify-content:center; gap:8px;
+        min-height:42px; padding:11px 20px; border:1px solid var(--accent);
+        border-radius:11px; background:var(--accent); color:#fff;
+        font:600 14px system-ui,sans-serif; text-decoration:none; cursor:pointer;
+        transition:filter .15s; }
+.primary:hover { filter:brightness(1.1); }
+.primary:disabled { opacity:.55; cursor:not-allowed; filter:none; }
+
+/* What the one fixed recipe actually does, and the licence the vendored
+   Ghostscript is served under. Quiet: needed once, not on every visit. */
+.preset { display:flex; flex-direction:column; gap:3px; padding:12px 14px;
+          border-radius:11px; background:var(--field-bg);
+          border-left:3px solid var(--accent); }
+.preset-name { font-size:13.5px; font-weight:600; }
+.preset-detail { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+
+.fineprint { margin:14px 0 0; font-size:12px; line-height:1.5; color:var(--muted); }
+.colophon { margin:22px 0 0; font-size:11.5px; color:var(--muted); }
+.colophon a { color:var(--muted); }
+.colophon a:hover { color:var(--fg); }
+
+/* Same red and placement as the login page's error line. No animation: this
+   re-renders on every failed attempt. */
+.err { margin:0 0 18px; padding:11px 14px; border-radius:11px;
+       border:1px solid #e0555566; background:#e0555518;
+       color:#ff6b6b; font-size:13px; }
+
+/* ---- Results -------------------------------------------------------------- */
+.results { margin-top:26px; }
+.results-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+                margin-bottom:12px; }
+.results-head h2 { margin:0; font-size:16px; font-weight:600; }
+.results-total { font-size:13px; color:var(--muted); }
+.result-list { margin:0; padding:0; list-style:none; display:flex;
+               flex-direction:column; gap:8px; }
+
+/* One row per file. The columns are named so the grid reads as the row does:
+   name, status, the bar, and the way to get the file. It collapses to two rows
+   on a narrow screen rather than squeezing four columns into a phone. */
+.row { display:grid; gap:2px 14px; align-items:start;
+       grid-template-columns:18px minmax(0,1fr) auto;
+       grid-template-areas:"mark name   get"
+                           "mark status get"
+                           "mark detail get";
+       padding:12px 16px; border:1px solid var(--field-br); border-radius:12px;
+       background:color-mix(in srgb, var(--fg) 3%, var(--bg)); }
+.row-name   { grid-area:name; font-size:13.5px; font-weight:600;
+              overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Tabular figures so "6.4 MB → 1.4 MB" lines up down a column of files. */
+.row-status { grid-area:status; font-size:13px; color:var(--fg);
+              font-variant-numeric:tabular-nums; }
+.row-detail { grid-area:detail; font-size:12px; color:var(--muted); }
+/* Spinner while the worker has it, then the outcome. One element, three
+   states, so a row cannot show a tick and a spinner at once. */
+.row-mark { grid-area:mark; width:16px; height:16px; margin-top:3px;
+            display:grid; place-items:center; box-sizing:border-box; }
+.row:not(.done):not(.failed) .row-mark {
+            border:2px solid color-mix(in srgb, var(--fg) 20%, transparent);
+            border-top-color:var(--accent); border-radius:50%;
+            animation:rowspin .8s linear infinite; }
+@keyframes rowspin { to { transform:rotate(1turn); } }
+.row.done .row-mark::after   { content:"\2713"; color:#3ba55d; font:700 13px/1 system-ui,sans-serif; }
+.row.failed .row-mark::after { content:"\2715"; color:#e05555; font:700 12px/1 system-ui,sans-serif; }
+/* A spinner is decoration; someone who asked for less motion should not get a
+   thing rotating at them for the length of a 1000-image PDF. */
+@media (prefers-reduced-motion: reduce) {
+  .row:not(.done):not(.failed) .row-mark { animation:none; }
+}
+.row-get    { grid-area:get; align-self:center; font-size:13px; font-weight:600;
+              text-decoration:none; color:var(--accent); white-space:nowrap; }
+.row-get:hover { text-decoration:underline; }
+
+/* Nothing to draw to scale until it is done, and a red row's bar would read as
+   a progress bar stuck at zero. */
+.row.failed { border-color:#e0555566; background:#e0555514; }
+.row.failed .row-status { color:#ff6b6b; }
+
+
+/* ---- Toast notices — tv-webui's, verbatim --------------------------------- */
+#notices { position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+           z-index:500; display:flex; flex-direction:column-reverse; gap:8px;
+           align-items:center; pointer-events:none; }
+.notice { pointer-events:auto; cursor:pointer; display:flex; align-items:center; gap:10px;
+          max-width:90vw; padding:11px 15px; border-radius:12px; font-size:13.5px; font-weight:500;
+          background:var(--bg); color:var(--fg); border:1px solid var(--field-br);
+          box-shadow:0 10px 34px rgba(0,0,0,.4); opacity:0; transform:translateY(12px);
+          transition:opacity .2s, transform .2s; }
+.notice.in { opacity:1; transform:translateY(0); }
+.notice .ni { flex:none; display:grid; place-items:center; width:22px; height:22px;
+              border-radius:50%; font:700 12px/1 system-ui,sans-serif; color:#fff;
+              background:var(--accent); }
+.notice.success .ni { background:#3ba55d; }
+.notice.error .ni { background:#e05555; }
+
+/* ---- Phones --------------------------------------------------------------- */
+@media (max-width: 700px) {
+  .content { padding:6px 14px 28px; }
+  header { padding:14px; }
+  .card { padding:16px; }
+  .choices { grid-template-columns:1fr; }
+  .primary { width:100%; }
+  .choices { grid-template-columns:1fr; }
+}

@@ -1,0 +1,29 @@
+name: toolshed
+
+services:
+  toolshed:
+    build: .
+    networks: [edge]          # gateway reaches us here; no `ports:` — ever
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Budapest     # the deployment is in Hungary
+    # Nothing heavy runs here any more — Ghostscript moved into the browser —
+    # so these bound a process that now only renders templates and serves static
+    # files. No `mem_limit`: this host's kernel carries `cgroup_disable=memory`,
+    # so docker discards it with a warning, and a control that is not enforced is
+    # worse than none because it reads like one.
+    pids_limit: 128
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  edge:
+    external: true            # docker network create edge (already exists on the host)
