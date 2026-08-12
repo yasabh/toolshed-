@@ -127,6 +127,7 @@ public/
                  flags in one place, imported by the page and the worker so
                  they cannot drift
   pdf-images.js  finds image XObjects by reading the PDF bytes
+  zip.js         a stored-only ZIP writer, ~90 lines, for "Download selected"
   gs-worker.js   Ghostscript, off the main thread
   vendor/        ghostscript-wasm-esm, committed; see test/vendor.sh
 test/
@@ -244,6 +245,25 @@ The 15.4 MB module is compiled **once** on the main thread and the resulting
 `WebAssembly.Module` is posted to every worker. Compiling it per worker is the
 obvious way to make a pool slower than no pool. Workers are terminated after each
 batch; the compiled module is kept.
+
+### Selecting results
+
+Everything that finishes starts ticked — the common case is "all of them", and
+unticking two beats ticking eighteen. A row still compressing has a *disabled*
+checkbox rather than none, because a missing box only raises a question. "Select
+all" goes indeterminate at 3 of 4 so the header never claims more than is true,
+and the whole row tints rather than only the box: the tick can sit 300px from the
+button it governs. Counts live inside the buttons (*Download 3*), so an action
+names its own scope and cannot be misread as "all". One file selected downloads
+as a PDF, not a zip of one.
+
+**Email is feature-detected and often absent.** `mailto:` cannot carry an
+attachment — there is no parameter for it, in any browser — so the only way that
+keeps files on the machine is `navigator.share({files})`, the OS share sheet.
+That exists on Android, iOS Safari and Chrome/Edge on Windows, and not on desktop
+Firefox or most of Linux. Where it is missing the button is not rendered at all,
+rather than rendered and then failing. Sending from a server would work
+everywhere and would make "nothing is uploaded" a lie.
 
 ### Multiple files
 

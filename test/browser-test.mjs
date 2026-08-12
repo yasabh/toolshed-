@@ -166,7 +166,8 @@ try {
 
     const name = await page.$eval(".row-get", (e) => e.getAttribute("download"));
     name === "sample_compressed_email_quality.pdf"
-      ? ok(`download named ${name}`) : bad(`download named ${name}`);
+      ? ok(`download named ${name}`)
+      : bad(`download named ${JSON.stringify(name)}, expected "sample_compressed_email_quality.pdf"`);
 
     // The mixed case: one image above the 200 dpi target, one below it.
     const detail = await page.$eval(".row.done .row-detail", (e) => e.textContent);
@@ -179,13 +180,28 @@ try {
   // Print is known to keep more than Email does.
   const emailBytes = await page.evaluate(async () =>
     (await (await fetch(document.querySelector(".row-get").href)).arrayBuffer()).byteLength);
-  await page.click('.choice input[value="print"]');
+  // Clicked through the element rather than by coordinates: the radio is
+  // appearance:none, so a synthesized click is the reliable way to move it, and
+  // the return value proves it moved rather than assuming.
+  const switched = await page.evaluate(() => {
+    const radio = document.querySelector('.choice input[value="print"]');
+    radio.click();
+    return radio.checked;
+  });
+  switched ? ok("switched to Print (Brochure)") : bad("the Print radio did not take");
+
+  // Mark the current rows first. Waiting on #go alone is not enough: it already
+  // reads "Compress" at the moment of clicking, so the wait returns instantly and
+  // the assertions below read the *previous* run's results. The marker only
+  // clears when reset() has replaced every row, which is the real start signal.
+  await page.evaluate(() =>
+    document.querySelectorAll(".row").forEach((r) => r.classList.add("stale")));
   await page.click("#go");
-  // Wait for the whole batch, not the first row to finish: with a pool running,
-  // ".row.done" matches while other rows are still going, and reading the first
-  // .row-get then can catch a link that has no href yet.
   await page.waitForFunction(
-    () => document.getElementById("go").textContent === "Compress",
+    () => document.querySelectorAll(".row.stale").length === 0, { timeout: 60000 });
+  await page.waitForFunction(
+    () => document.getElementById("go").textContent === "Compress" &&
+          document.querySelectorAll(".row.done, .row.failed").length === 4,
     { timeout: 180000 });
   const printFailed = await page.$(".row.failed");
   if (printFailed) {
@@ -203,8 +219,98 @@ try {
       : bad(`row detail does not name the preset: ${detail}`);
     const pname = await page.$eval(".row-get", (e) => e.getAttribute("download"));
     pname === "sample_compressed_print_quality.pdf"
-      ? ok(`download named ${pname}`) : bad(`download named ${pname}`);
+      ? ok(`download named ${pname}`)
+      : bad(`download named ${JSON.stringify(pname)}, expected "sample_compressed_print_quality.pdf"`);
   }
+
+  // ---- Selection drives the actions ----------------------------------------
+  const sel = () => page.evaluate(() => ({
+    all: document.getElementById("selectAll").checked,
+    some: document.getElementById("selectAll").indeterminate,
+    count: document.getElementById("resultsCount").textContent,
+    download: document.getElementById("downloadSelected").querySelector("span").textContent,
+    disabled: document.getElementById("downloadSelected").disabled,
+    rows: [...document.querySelectorAll(".row.selected")].length,
+  }));
+
+  let state = await sel();
+  state.all && state.count.startsWith("4 of 4 selected")
+    ? ok(`everything finished starts selected (${state.count})`)
+    : bad(`initial selection: ${JSON.stringify(state)}`);
+  state.download === "Download 4 (zip)"
+    ? ok(`the button names its own scope: "${state.download}"`)
+    : bad(`button says "${state.download}"`);
+
+  // Untick one: the header must go indeterminate, not stay "all".
+  await page.click(".row:nth-child(2) .row-sel");
+  state = await sel();
+  !state.all && state.some && state.count.startsWith("3 of 4 selected")
+    ? ok(`unticking one gives "${state.count}", header indeterminate`)
+    : bad(`after untick: ${JSON.stringify(state)}`);
+  state.rows === 3 ? ok("three rows are tinted") : bad(`${state.rows} rows tinted`);
+  state.download === "Download 3 (zip)"
+    ? ok(`button follows the selection: "${state.download}"`)
+    : bad(`button says "${state.download}"`);
+
+  // Down to one: no zip, because unzipping to get back what you had is a chore.
+  await page.evaluate(() => {
+    document.querySelectorAll(".row .row-sel").forEach((c, i) => {
+      if (i > 0 && c.checked) c.click();
+    });
+  });
+  state = await sel();
+  state.download === "Download 1"
+    ? ok(`one file is not an archive: "${state.download}"`)
+    : bad(`button says "${state.download}"`);
+
+  // None: both actions must go inert rather than producing an empty zip.
+  await page.click("#selectAll");
+  await page.click("#selectAll");
+  state = await sel();
+  if (state.count.startsWith("0 of 4 selected")) {
+    state.disabled ? ok("nothing selected disables the actions")
+                   : bad("actions still enabled with nothing selected");
+  } else {
+    // Clicking an indeterminate box checks it, so one click may select all.
+    await page.evaluate(() => document.querySelectorAll(".row .row-sel")
+      .forEach((c) => { if (c.checked) c.click(); }));
+    state = await sel();
+    state.disabled ? ok("nothing selected disables the actions")
+                   : bad(`with ${state.count}: ${JSON.stringify(state)}`);
+  }
+
+  // Email is feature-detected. Headless Chromium has no share sheet, so the
+  // button must be absent — shown-and-failing is the outcome being avoided.
+  const email = await page.evaluate(() => ({
+    hidden: document.getElementById("emailSelected").hidden,
+    canShare: typeof navigator.canShare === "function",
+  }));
+  email.hidden || email.canShare
+    ? ok(`Email button hidden where sharing is unavailable (hidden=${email.hidden})`)
+    : bad("Email button shown without share support");
+
+  // The zip is written by hand, so its bytes are worth checking rather than
+  // assuming: PK signature, and the central directory claims the right count.
+  const zip = await page.evaluate(async () => {
+    const { makeZip } = await import("./static/zip.js");
+    const enc = new TextEncoder();
+    const blob = makeZip([
+      { name: "a.pdf", bytes: enc.encode("%PDF-1.7 one") },
+      { name: "b.pdf", bytes: enc.encode("%PDF-1.7 two") },
+    ]);
+    const b = new Uint8Array(await blob.arrayBuffer());
+    const view = new DataView(b.buffer);
+    return {
+      sig: String.fromCharCode(b[0], b[1]),
+      size: b.length,
+      // End-of-central-directory is the last 22 bytes when there is no comment.
+      endSig: view.getUint32(b.length - 22, true) === 0x06054b50,
+      entries: view.getUint16(b.length - 22 + 10, true),
+    };
+  });
+  zip.sig === "PK" && zip.endSig && zip.entries === 2
+    ? ok(`zip is well-formed: PK, ${zip.entries} entries, ${zip.size} bytes`)
+    : bad(`zip malformed: ${JSON.stringify(zip)}`);
 
   // The claim on the page is that nothing is uploaded. This is what checks it.
   const uploads = requests.filter((r) => r.method !== "GET");

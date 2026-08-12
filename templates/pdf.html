@@ -64,12 +64,32 @@ your browser, not on the server.</p></noscript>
 </form>
 
 <!-- One row per file, filled in by pdf.js as each one finishes. -->
-<section class="results" id="results" hidden aria-live="polite">
-  <div class="results-head">
-    <h2>Results</h2>
+<section class="results" id="results" hidden>
+  <!-- The action bar. Counts live inside the buttons so an action names its own
+       scope and cannot be misread as "all"; the total size sits by the count
+       because Email has a size limit and Download does not. -->
+  <div class="results-bar">
+    <label class="selectall">
+      <input type="checkbox" class="check" id="selectAll" checked>
+      Select all
+    </label>
+    <span class="results-count" id="resultsCount"></span>
     <span class="results-total" id="resultsTotal"></span>
+    <div class="results-actions">
+      <button type="button" class="ghost" id="downloadSelected">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+        <span>Download</span>
+      </button>
+      <!-- Hidden unless navigator.canShare({files}) says the browser can carry
+           an attachment. mailto: cannot, in any browser, so there is nothing to
+           fall back to — see emailSelected in pdf.js. -->
+      <button type="button" class="ghost" id="emailSelected" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m3 8 9 6 9-6"/></svg>
+        <span>Email</span>
+      </button>
+    </div>
   </div>
-  <ul class="result-list" id="resultList"></ul>
+  <ul class="result-list" id="resultList" aria-live="polite"></ul>
 </section>
 
 <template id="pickTemplate">
@@ -86,10 +106,14 @@ your browser, not on the server.</p></noscript>
 </template>
 
 <template id="rowTemplate">
-  <li class="row">
+  <li class="row pending">
+    <!-- Disabled rather than absent while a file is still compressing: there is
+         nothing to act on yet, and a disabled box says that where a missing one
+         only raises a question. -->
+    <input type="checkbox" class="check row-sel" disabled>
     <!-- Spinner while it works, then a tick or a cross. The bar this replaced
-       drew how much of the original was *left*, which everyone read as a
-       progress bar stuck near zero. -->
+         drew how much of the original was *left*, which everyone read as a
+         progress bar stuck near zero. -->
     <span class="row-mark" aria-hidden="true"></span>
     <span class="row-name"></span>
     <a class="row-get" download hidden>Download</a>

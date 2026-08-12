@@ -224,23 +224,61 @@ header .spacer { flex:1; }
 
 /* ---- Results -------------------------------------------------------------- */
 .results { margin-top:26px; }
-.results-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
-                margin-bottom:12px; }
-.results-head h2 { margin:0; font-size:16px; font-weight:600; }
-.results-total { font-size:13px; color:var(--muted); }
+
+/* No border and no fill: this is a row of controls, not a panel. The rules
+   around it were fighting the result cards below for attention. */
+.results-bar { display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+               margin-bottom:12px; }
+.selectall { display:flex; align-items:center; gap:9px; font-size:13px;
+             font-weight:600; cursor:pointer; user-select:none; }
+.selectall:has(input:disabled) { opacity:.5; cursor:default; }
+.results-count { font-size:13px; color:var(--muted); }
+/* The batch outcome. Pushed to the right so the selection reads as one group on
+   the left and this as a separate, persistent fact. */
+.results-total { margin-left:auto; font-size:13px; color:var(--muted);
+                 font-variant-numeric:tabular-nums; }
+.results-actions { display:flex; gap:8px; flex-wrap:wrap; }
+
+/* Drawn by hand: the native checkbox follows the OS colour-scheme and shows up
+   dark on the light theme. Same trick as tv-webui's. */
+.check { appearance:none; -webkit-appearance:none; flex:none; margin:0;
+         width:16px; height:16px; border-radius:5px; cursor:pointer;
+         border:2px solid var(--field-br); background:var(--field-bg);
+         display:grid; place-items:center; transition:background .12s, border-color .12s; }
+.check:checked, .check:indeterminate { background:var(--accent); border-color:var(--accent); }
+.check:checked::after { content:""; width:4px; height:8px; margin-top:-2px;
+         border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg); }
+/* "Some, not all" — the header must not claim more than is true. */
+.check:indeterminate::after { content:""; width:8px; height:2px; background:#fff; }
+.check:disabled { opacity:.4; cursor:not-allowed; }
+
+/* Secondary to the Compress button above: these act on what is already done. */
+.ghost { display:inline-flex; align-items:center; gap:7px; min-height:34px;
+         padding:7px 14px; border:1px solid var(--field-br); border-radius:10px;
+         background:transparent; color:var(--fg); cursor:pointer;
+         font:600 13px system-ui,sans-serif; transition:background .15s; }
+.ghost:hover:not(:disabled) { background:var(--field-bg); }
+.ghost:disabled { opacity:.45; cursor:not-allowed; }
+.ghost svg { width:15px; height:15px; }
 .result-list { margin:0; padding:0; list-style:none; display:grid; gap:8px;
                grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); }
 
 /* One row per file. The columns are named so the grid reads as the row does:
    name, status, the bar, and the way to get the file. It collapses to two rows
    on a narrow screen rather than squeezing four columns into a phone. */
-.row { display:grid; gap:2px 14px; align-items:start;
-       grid-template-columns:18px minmax(0,1fr) auto;
-       grid-template-areas:"mark name   get"
-                           "mark status get"
-                           "mark detail get";
+.row { display:grid; gap:2px 12px; align-items:start;
+       grid-template-columns:16px 16px minmax(0,1fr) auto;
+       grid-template-areas:"sel mark name   get"
+                           "sel mark status get"
+                           "sel mark detail get";
        padding:12px 16px; border:1px solid var(--field-br); border-radius:12px;
        background:color-mix(in srgb, var(--fg) 3%, var(--bg)); }
+/* The whole row tints, not just the box: the tick can sit 300px from the button
+   it governs, and a 16px change that far away is not an answer to "what will
+   Download act on?". */
+.row.selected { background:color-mix(in srgb, var(--accent) 12%, var(--bg));
+                border-color:color-mix(in srgb, var(--accent) 45%, var(--field-br)); }
+.row-sel { grid-area:sel; margin-top:3px; }
 .row-name   { grid-area:name; font-size:13.5px; font-weight:600;
               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* Tabular figures so "6.4 MB → 1.4 MB" lines up down a column of files. */

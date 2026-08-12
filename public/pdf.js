@@ -7,6 +7,7 @@
 // than maximised.
 import { notice, humanBytes } from "./app.js";
 import { PRESETS, DEFAULT_PRESET, presetById } from "./presets.js";
+import { makeZip } from "./zip.js";
 
 const form = document.getElementById("shrink");
 const input = document.getElementById("file");
@@ -21,11 +22,18 @@ const results = document.getElementById("results");
 const list = document.getElementById("resultList");
 const total = document.getElementById("resultsTotal");
 const rowTemplate = document.getElementById("rowTemplate");
+const selectAll = document.getElementById("selectAll");
+const resultsCount = document.getElementById("resultsCount");
+const downloadSelected = document.getElementById("downloadSelected");
+const emailSelected = document.getElementById("emailSelected");
 const choices = document.getElementById("choices");
 const maxBytes = Number(form.dataset.maxBytes);
 const maxFiles = Number(form.dataset.maxFiles);
 
 let objectUrls = [];
+// Every finished file, in row order: { name, bytes, row }. The row keeps the
+// checkbox, so this is the only place that has to know what "selected" means.
+let finished = [];
 
 /* ---- The worker pool -----------------------------------------------------
    One worker is one core, which on an eight-core machine is twelve percent of
@@ -294,12 +302,103 @@ form.addEventListener("submit", async (e) => {
   summarise(files.length - failed, failed, before, after);
 });
 
+/* ---- Selection ------------------------------------------------------------
+   Everything that finishes starts ticked: the common case is "all of them", and
+   unticking two is less work than ticking eighteen. */
+const selected = () => finished.filter((item) => item.row.querySelector(".row-sel").checked);
+
+// Sharing a file needs a File, not a Blob — the name is what the mail client
+// attaches it as.
+const asFile = (item) =>
+  new File([item.bytes], item.name, { type: "application/pdf" });
+
+function syncSelection() {
+  const picked = selected();
+  const bytes = picked.reduce((sum, item) => sum + item.bytes.length, 0);
+
+  for (const item of finished) {
+    item.row.classList.toggle("selected", item.row.querySelector(".row-sel").checked);
+  }
+
+  // Indeterminate at "some", so the header never claims more than is true.
+  selectAll.checked = picked.length > 0 && picked.length === finished.length;
+  selectAll.indeterminate = picked.length > 0 && picked.length < finished.length;
+  selectAll.disabled = finished.length === 0;
+
+  resultsCount.textContent = finished.length
+    ? `${picked.length} of ${finished.length} selected` +
+      (picked.length ? ` · ${humanBytes(bytes)}` : "")
+    : "";
+
+  for (const button of [downloadSelected, emailSelected]) {
+    button.disabled = picked.length === 0;
+    // The count goes in the label so the action names its own scope.
+    button.querySelector("span").textContent =
+      `${button === emailSelected ? "Email" : "Download"}` +
+      (picked.length ? ` ${picked.length}` : "") +
+      (button === downloadSelected && picked.length > 1 ? " (zip)" : "");
+  }
+}
+
+selectAll.addEventListener("change", () => {
+  for (const item of finished) {
+    item.row.querySelector(".row-sel").checked = selectAll.checked;
+  }
+  syncSelection();
+});
+
+downloadSelected.addEventListener("click", () => {
+  const picked = selected();
+  if (!picked.length) return;
+  // One file is not an archive. Zipping it would make the user unzip something
+  // to get back exactly what they already had.
+  const blob = picked.length === 1
+    ? new Blob([picked[0].bytes], { type: "application/pdf" })
+    : makeZip(picked.map(({ name, bytes }) => ({ name, bytes })));
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = picked.length === 1 ? picked[0].name : "compressed-pdfs.zip";
+  link.click();
+  // Revoked on the next frame, not immediately: the click has to be dispatched
+  // before the URL stops resolving.
+  requestAnimationFrame(() => URL.revokeObjectURL(url));
+});
+
+emailSelected.addEventListener("click", async () => {
+  const picked = selected();
+  if (!picked.length) return;
+  const files = picked.map(asFile);
+  // Re-checked with the real files: canShare can refuse a specific set (too
+  // large, wrong type) even when it accepted the capability probe.
+  if (!navigator.canShare?.({ files })) {
+    notice("This browser will not attach files to an email. Download instead.", "error");
+    return;
+  }
+  try {
+    await navigator.share({ files, title: "Compressed PDFs" });
+  } catch (err) {
+    // A user closing the share sheet is not a failure worth a toast.
+    if (err?.name !== "AbortError") notice("Could not open the share sheet.", "error");
+  }
+});
+
+// mailto: cannot carry an attachment — there is no parameter for it, in any
+// browser — so there is nothing to fall back to. Where the OS share sheet is
+// missing the button is not shown at all, rather than shown and then failing.
+// Probed with a real File because Firefox implements canShare but refuses files.
+if (navigator.canShare?.({ files: [new File([new Uint8Array(1)], "a.pdf", { type: "application/pdf" })] })) {
+  emailSelected.hidden = false;
+}
+
 /* ---- The rows ------------------------------------------------------------- */
 function reset(files) {
   for (const url of objectUrls) URL.revokeObjectURL(url);
   objectUrls = [];
   list.replaceChildren();
   total.textContent = "";
+  finished = [];
   for (const file of files) {
     const row = rowTemplate.content.firstElementChild.cloneNode(true);
     row.querySelector(".row-name").textContent = file.name;
@@ -307,17 +406,26 @@ function reset(files) {
     list.append(row);
   }
   results.hidden = false;
+  syncSelection();
 }
 
 function resolveRow(row, file, out, images, preset) {
   const url = URL.createObjectURL(new Blob([out], { type: "application/pdf" }));
   objectUrls.push(url);
 
+  const name = file.name.replace(/\.pdf$/i, "") + preset.suffix + ".pdf";
+  const checkbox = row.querySelector(".row-sel");
+  checkbox.disabled = false;
+  checkbox.checked = true;
+  checkbox.addEventListener("change", syncSelection);
+  row.classList.remove("pending");
+  finished.push({ name, bytes: out, row });
+
   const link = row.querySelector(".row-get");
   link.href = url;
-  // The name says which recipe produced it, so two runs of the same source
-  // do not land in the downloads folder as "file (1).pdf".
-  link.download = file.name.replace(/\.pdf$/i, "") + preset.suffix + ".pdf";
+  // The name says which recipe produced it, so two runs of the same source do
+  // not land in the downloads folder as "file (1).pdf".
+  link.download = name;
   link.hidden = false;
 
   row.classList.add("done");
@@ -350,17 +458,27 @@ function describeImages({ total, resized, kept }) {
 
 function failRow(row, message) {
   row.classList.add("failed");
+  row.classList.remove("pending");
   row.querySelector(".row-status").textContent = message;
 }
 
 function summarise(ok, failed, before, after) {
+  syncSelection();
   if (!ok) {
-    total.textContent = failed === 1 ? "Failed" : `All ${failed} failed`;
+    total.textContent = "";
+    notice(failed === 1 ? "That file could not be compressed."
+                        : `All ${failed} files failed.`, "error");
     return;
   }
+  // Written into the bar, not raised as a toast. Two reasons, and the first one
+  // is a bug this replaced: the toast is fixed to the bottom centre, which is
+  // where the Compress button sits on a normal window, so for its whole life it
+  // swallowed clicks meant for the button underneath it. The second is that a
+  // batch's saving is a fact about the results, not an event — it should still
+  // be readable a minute later. Toasts are kept for failures.
   const saved = before ? Math.round((1 - after / before) * 100) : 0;
-  const parts = [`${humanBytes(before)} → ${humanBytes(after)}`];
-  if (saved > 0) parts.unshift(`${saved}% smaller overall`);
-  if (failed) parts.push(`${failed} failed`);
-  total.textContent = parts.join(" · ");
+  total.textContent = saved > 0
+    ? `${saved}% smaller overall · ${humanBytes(before)} → ${humanBytes(after)}`
+    : "";
+  if (failed) notice(`${failed} of ${failed + ok} files failed.`, "error");
 }
