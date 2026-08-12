@@ -33,19 +33,17 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-6 9 6v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 21v-7h6v7"/></svg>
       </span>
       <span class="brand-name">Toolshed</span>
+      <button id="sidebarToggle" class="collapse-btn" type="button"
+              aria-label="Collapse sidebar" aria-expanded="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h10M3 12h10M3 18h10"/><path d="M21 12H15M17.5 8.5 14 12l3.5 3.5"/></svg>
+      </button>
     </div>
 
     <nav aria-label="Tools">
       {{nav}}
     </nav>
 
-    <button id="sidebarToggle" class="collapse-btn" type="button"
-            aria-label="Collapse sidebar" aria-expanded="true">
-      <span class="nav-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-      </span>
-      <span class="nav-label">Collapse</span>
-    </button>
+    {{account}}
   </aside>
 
   <main class="pane">
@@ -54,7 +52,6 @@
          deep link has to say where it landed without the sidebar being read. -->
       <h1 class="page-title">{{heading}}</h1>
       <span class="spacer"></span>
-      {{whoami}}
       <!-- Copied from tv-webui verbatim: one round button showing the current
          mode's icon, click toggles light<->dark. -->
       <button id="theme" class="theme-toggle" type="button" title="Change theme" aria-label="Change theme">

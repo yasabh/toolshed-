@@ -11,10 +11,9 @@
 <noscript><p class="err">This tool needs JavaScript — the compression runs in
 your browser, not on the server.</p></noscript>
 
+<div class="workbench">
 <form id="shrink" class="card" data-max-bytes="{{max_bytes}}"
       data-max-files="{{max_files}}">
-  <div class="card-grid">
-  <div class="card-main">
 
   <div class="field">
     <!-- Label above the field, not a placeholder — a placeholder disappears
@@ -46,55 +45,57 @@ your browser, not on the server.</p></noscript>
   <button type="submit" class="primary" id="go" disabled>Compress</button>
   <p class="fineprint">Only images are touched. Text and vectors are left
   exactly as they are, so a PDF that is mostly text will barely change size.</p>
-  </div>
-
-  <!-- The queue, beside the controls rather than under them: with twenty files
-       the Compress button would otherwise be pushed off the screen by the list
-       above it. Same box, second column, and the list scrolls inside itself.
-       Chips sit here and not in the drop zone, because the invisible file input
-       covering that zone would swallow every click meant for a chip's ×. -->
-  <aside class="queue" id="queue" hidden>
-    <div class="queue-head">
-      <h2>Selected</h2>
-      <button type="button" class="queue-clear" id="clearPicks">Clear all</button>
-    </div>
-    <ul class="picks" id="picks"></ul>
-  </aside>
-  </div>
 </form>
 
-<!-- One row per file, filled in by pdf.js as each one finishes. -->
-<section class="results" id="results" hidden>
-  <!-- The action bar. Counts live inside the buttons so an action names its own
-       scope and cannot be misread as "all"; the total size sits by the count
-       because Email has a size limit and Download does not. -->
-  <div class="results-bar">
-    <label class="selectall">
-      <input type="checkbox" class="check" id="selectAll" checked>
-      Select all
-    </label>
-    <span class="results-count" id="resultsCount"></span>
-    <span class="results-warn" id="notDownloaded"></span>
-    <span class="results-total" id="resultsTotal"></span>
-    <div class="results-actions">
-      <button type="button" class="ghost" id="downloadSelected">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-        <span>Download</span>
-      </button>
-      <!-- "Share", not "Email": this opens the operating system's share sheet,
-           and what is in it is the device's business — mail, WhatsApp, Drive,
-           AirDrop. Naming one of them would promise something we do not control.
-           Hidden unless navigator.canShare({files}) says the browser can carry an
-           attachment at all; see shareSelected in pdf.js. -->
-      <button type="button" class="ghost" id="shareSelected" hidden
-              title="Email, chat, cloud drive — whatever this device offers">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
-        <span>Share to…</span>
-      </button>
+<!-- Both lists in one column: what is waiting, and what came out. Their own
+     column rather than sitting under the controls, because with twenty files the
+     Compress button would be pushed off the screen by the queue above it. Each
+     list scrolls inside itself so the button never moves.
+     Chips live here and not in the drop zone, because the invisible file input
+     covering that zone would swallow every click meant for a chip's ×. -->
+<div class="card queue" id="queue">
+    <div class="panel-head">
+      <h2>To process</h2>
+      <button type="button" class="queue-clear" id="clearPicks" hidden>Clear all</button>
     </div>
-  </div>
+  <ul class="picks" id="picks"></ul>
+  <p class="empty" id="picksEmpty">No files picked yet.</p>
+</div>
+
+<div class="card results" id="results">
+    <div class="panel-head">
+      <h2>Compressed</h2>
+    </div>
+    <!-- The action bar. Counts are left out of the buttons: the bar already says
+         "3 of 4 selected" beside them, and repeating it made three numbers on one
+         line that all meant the same thing. -->
+    <div class="results-bar" id="resultsBar" hidden>
+      <label class="selectall">
+        <input type="checkbox" class="check" id="selectAll" checked>
+        Select all
+      </label>
+      <span class="results-count" id="resultsCount"></span>
+      <span class="results-total" id="resultsTotal"></span>
+      <div class="results-actions">
+        <button type="button" class="ghost" id="downloadSelected">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+          <span>Download</span>
+        </button>
+        <!-- "Share", not "Email": this opens the operating system's share sheet,
+             and what is in it is the device's business. Hidden unless
+             navigator.canShare({files}) says the browser can carry an attachment
+             at all; see shareSelected in pdf.js. -->
+        <button type="button" class="ghost" id="shareSelected" hidden
+                title="Email, chat, cloud drive — whatever this device offers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
+          <span>Share to…</span>
+        </button>
+      </div>
+    </div>
   <ul class="result-list" id="resultList" aria-live="polite"></ul>
-</section>
+  <p class="empty" id="resultsEmpty">Nothing compressed yet.</p>
+</div>
+</div>
 
 <template id="pickTemplate">
   <li class="pick">
@@ -120,7 +121,16 @@ your browser, not on the server.</p></noscript>
          progress bar stuck near zero. -->
     <span class="row-mark" aria-hidden="true"></span>
     <span class="row-name"></span>
-    <a class="row-get" download hidden>Download</a>
+    <span class="row-actions">
+      <!-- Opened in the browser's own PDF viewer, deliberately. Rendering both
+           sides with the Ghostscript that produced them would hide exactly the
+           damage this is meant to reveal: a quirk of that renderer would appear
+           identically on both sides and cancel out. The viewer here is a second
+           opinion, and it is the same kind of viewer the person receiving the
+           file will open it in. -->
+      <button type="button" class="row-preview" hidden>Preview</button>
+      <a class="row-get" download hidden>Download</a>
+    </span>
     <span class="row-status"></span>
     <span class="row-detail"></span>
   </li>
@@ -131,4 +141,33 @@ your browser, not on the server.</p></noscript>
 <p class="colophon">Uses
   <a target="blank" href="https://github.com/sharevb/ghostscript-wasm-esm">ghostscript-wasm-esm</a>,
   <a target="blank" href="{{prefix}}/static/vendor/LICENSE">AGPL-3.0</a>.</p>
+<!-- Side by side, original left and compressed right, each in the browser's own
+     PDF viewer. The zoom control drives both by rewriting the #zoom fragment
+     they were opened with. -->
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer-bar">
+    <span class="viewer-name" id="viewerName"></span>
+    <div class="viewer-zoom" role="group" aria-label="Zoom">
+      <button type="button" data-zoom="fit" aria-pressed="true">Fit</button>
+      <button type="button" data-zoom="150">150%</button>
+      <button type="button" data-zoom="200">200%</button>
+      <button type="button" data-zoom="300">300%</button>
+    </div>
+    <button type="button" class="viewer-close" id="viewerClose" aria-label="Close preview">✕</button>
+  </div>
+  <div class="viewer-panes">
+    <section class="viewer-pane">
+      <h3>Original <span id="viewerBefore"></span></h3>
+      <div class="viewer-scroll"><iframe id="viewerA" title="Original PDF"></iframe></div>
+    </section>
+    <section class="viewer-pane">
+      <h3>Compressed <span id="viewerAfter"></span></h3>
+      <div class="viewer-scroll"><iframe id="viewerB" title="Compressed PDF"></iframe></div>
+    </section>
+  </div>
+  <p class="viewer-note">Both panes are the browser's own PDF viewer, so what you
+  see here is what the person receiving the file will see. Each pane also keeps
+  its own controls.</p>
+</div>
+
 <script type="module" src="{{prefix}}/static/pdf.js"></script>

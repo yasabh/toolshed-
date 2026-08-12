@@ -15,6 +15,15 @@ const drop = document.getElementById("drop");
 const dropText = document.getElementById("dropText");
 const picks = document.getElementById("picks");
 const queue = document.getElementById("queue");
+const picksEmpty = document.getElementById("picksEmpty");
+const resultsBar = document.getElementById("resultsBar");
+const resultsEmpty = document.getElementById("resultsEmpty");
+const viewer = document.getElementById("viewer");
+const viewerName = document.getElementById("viewerName");
+const viewerBefore = document.getElementById("viewerBefore");
+const viewerAfter = document.getElementById("viewerAfter");
+const viewerA = document.getElementById("viewerA");
+const viewerB = document.getElementById("viewerB");
 const clearPicks = document.getElementById("clearPicks");
 const pickTemplate = document.getElementById("pickTemplate");
 const go = document.getElementById("go");
@@ -26,7 +35,6 @@ const selectAll = document.getElementById("selectAll");
 const resultsCount = document.getElementById("resultsCount");
 const downloadSelected = document.getElementById("downloadSelected");
 const shareSelected = document.getElementById("shareSelected");
-const notDownloaded = document.getElementById("notDownloaded");
 const choices = document.getElementById("choices");
 const maxBytes = Number(form.dataset.maxBytes);
 const maxFiles = Number(form.dataset.maxFiles);
@@ -276,9 +284,11 @@ function syncInput() {
 
 function renderPicks() {
   drop.classList.toggle("has-file", picked.length > 0);
-  // The pane only exists once there is something in it; an empty box beside the
-  // form is furniture.
-  queue.hidden = picked.length === 0;
+  // The panel stays on screen empty: the shape of the job — pick, process,
+  // collect — should be visible before anything has been picked, rather than
+  // columns appearing from nowhere as the user goes.
+  picksEmpty.hidden = picked.length > 0;
+  clearPicks.hidden = picked.length === 0;
   dropText.textContent = picked.length
     ? `${picked.length} file${picked.length > 1 ? "s" : ""} — ${humanBytes(
         picked.reduce((sum, f) => sum + f.size, 0))} in total`
@@ -314,10 +324,13 @@ function syncCompressButton() {
   if (compressing) return; // the running batch owns the label
   const left = workLeft().length;
   go.disabled = left === 0;
+  // "files" spelled out: this is the button that starts the work, and it is the
+  // one place a bare number would have to be read twice to know what it counts.
+  const plural = left === 1 ? "file" : "files";
   go.textContent = picked.length === 0 ? "Compress"
     : left === 0 ? "Compressed"
-    : left === picked.length ? `Compress ${left}`
-    : `Compress ${left} new`;
+    : left === picked.length ? `Compress ${left} ${plural}`
+    : `Compress ${left} new ${plural}`;
 }
 
 async function noteHashes(files) {
@@ -378,7 +391,8 @@ for (const type of ["dragenter", "dragover"]) {
   window.addEventListener(type, (e) => {
     if (!e.dataTransfer?.types.includes("Files")) return;
     e.preventDefault();                    // this is what claims the drop
-    e.dataTransfer.dropEffect = "copy";
+    e.dataTransfer.dropEffect = compressing ? "none" : "copy";
+    if (compressing) return;               // no highlight for a refused drop
     if (type === "dragenter") dragDepth++;
     overWindow(true);
   });
@@ -389,9 +403,17 @@ window.addEventListener("dragleave", () => {
   overWindow(false);
 });
 window.addEventListener("drop", (e) => {
+  // Always claimed, even mid-run: the default for an unhandled drop is to
+  // navigate to the file, which would replace the page and throw away a batch
+  // that is halfway through. Refusing to *take* the file is separate from
+  // refusing to let the browser act on it.
   e.preventDefault();
   dragDepth = 0;
   overWindow(false);
+  if (compressing) {
+    notice("Still compressing — wait for this batch to finish.", "error");
+    return;
+  }
   const dropped = [...(e.dataTransfer?.files || [])];
   // A dropped folder arrives with no type and no extension; taking it would add
   // a chip that can never compress.
@@ -399,6 +421,28 @@ window.addEventListener("drop", (e) => {
   if (pdfs.length) addFiles(pdfs);
   else if (dropped.length) notice("Only PDFs can be compressed.", "error");
 });
+
+/**
+ * Freeze the inputs while a batch runs.
+ *
+ * Not cosmetic. Removing a chip or adding a file mid-run would edit the list the
+ * running batch was started from, and the rows are addressed by index — the
+ * results would land on the wrong lines. Changing the quality would be worse:
+ * the preset is read once at the start, so the picker would say Print while
+ * Email was still being produced.
+ *
+ * `inert` rather than `disabled` on each control: it takes the whole subtree out
+ * of pointer events, tab order and the accessibility tree in one attribute, and
+ * it leaves the Compress button — which is outside these — free to keep
+ * announcing progress.
+ */
+function lockForm(locked) {
+  for (const part of form.querySelectorAll(".field")) part.inert = locked;
+  // The queue is its own panel now, a sibling of the form rather than a column
+  // inside it, so it has to be reached on its own.
+  queue.inert = locked;
+  form.classList.toggle("busy", locked);
+}
 
 /* ---- Compress ------------------------------------------------------------- */
 form.addEventListener("submit", async (e) => {
@@ -418,6 +462,7 @@ form.addEventListener("submit", async (e) => {
 
   go.disabled = true;
   compressing = true;
+  lockForm(true);
   syncUnloadWarning();
   // Read once, up front: changing the picker halfway through a batch must not
   // give half the files one quality and half another.
@@ -471,6 +516,7 @@ form.addEventListener("submit", async (e) => {
   });
 
   compressing = false;
+  lockForm(false);
   summarise(files.length - failed, failed, before, after);
   // Last, so it reads the results this run just added: with nothing left to do
   // it settles on "Compressed" and goes flat.
@@ -518,7 +564,6 @@ const asFile = (item) =>
 
 function syncSelection() {
   const picked = selected();
-  const bytes = picked.reduce((sum, item) => sum + item.bytes.length, 0);
 
   for (const item of finished) {
     item.row.classList.toggle("selected", item.row.querySelector(".row-sel").checked);
@@ -529,25 +574,28 @@ function syncSelection() {
   selectAll.indeterminate = picked.length > 0 && picked.length < finished.length;
   selectAll.disabled = finished.length === 0;
 
+  resultsBar.hidden = finished.length === 0;
+  resultsEmpty.hidden = finished.length > 0 || list.children.length > 0;
+  // Just the count. The selected size was a third number on a line that already
+  // carried two, and every row states its own size a few pixels below.
   resultsCount.textContent = finished.length
-    ? `${picked.length} of ${finished.length} selected` +
-      (picked.length ? ` · ${humanBytes(bytes)}` : "")
+    ? `${picked.length} of ${finished.length} selected`
     : "";
 
-  // Only what has not been taken a copy of is worth warning about.
-  const left = unsaved();
-  notDownloaded.textContent = left ? `${left} not downloaded yet` : "";
+  // No visible counter: the browser's own confirmation on the way out is the
+  // warning, and a running tally beside it was saying the same thing twice.
   syncUnloadWarning();
 
-  // The count goes in the label so an action names its own scope and cannot be
-  // read as "all". "Share to…" keeps its ellipsis: it opens a chooser rather
-  // than doing the thing.
-  const count = picked.length ? ` ${picked.length}` : "";
+  // No counts here: the bar already says "3 of 4 selected" a few centimetres to
+  // the left, and repeating it in both buttons made three numbers on one line
+  // that all mean the same thing. "(zip)" stays — that is not a count, it is
+  // what will land in the downloads folder. "Share to…" keeps its ellipsis: it
+  // opens a chooser rather than doing the thing.
   downloadSelected.disabled = picked.length === 0;
   downloadSelected.querySelector("span").textContent =
-    `Download${count}${picked.length > 1 ? " (zip)" : ""}`;
+    picked.length > 1 ? "Download (zip)" : "Download";
   shareSelected.disabled = picked.length === 0;
-  shareSelected.querySelector("span").textContent = `Share${count} to…`;
+  shareSelected.querySelector("span").textContent = "Share to…";
 }
 
 selectAll.addEventListener("change", () => {
@@ -606,6 +654,118 @@ if (navigator.canShare?.({ files: [new File([new Uint8Array(1)], "a.pdf", { type
   shareSelected.hidden = false;
 }
 
+/* ---- Preview --------------------------------------------------------------
+   Both files in the browser's own PDF viewer, side by side.
+
+   Not rendered by the Ghostscript that produced them, which was the first
+   instinct and the wrong one: a quirk of that renderer would show up identically
+   on both sides and cancel itself out, hiding the very damage this exists to
+   reveal. The browser's viewer is an independent second opinion, and it is the
+   same kind of viewer the person receiving the file will use.
+
+   The cost, stated on the page rather than hidden: a built-in viewer cannot be
+   driven from outside, so the zoom control is a hint passed in the URL fragment.
+   Chrome and Firefox honour it; others keep their own controls, which still
+   work. */
+let previewUrls = [];
+
+function openPreview(item) {
+  closePreview();
+  previewUrls = [
+    URL.createObjectURL(item.file),
+    URL.createObjectURL(new Blob([item.bytes], { type: "application/pdf" })),
+  ];
+  // toolbar=0 and navpanes=0 hide the viewer's own chrome — the sidebar of page
+  // thumbnails and the toolbar above it. Two toolbars stacked over two documents
+  // is most of the screen spent on furniture, and this window has its own zoom
+  // and its own close button already. Honoured by Chrome and Edge; Firefox keeps
+  // its toolbar, which is its choice to make and does no harm.
+  // FitH so each viewer starts by fitting its pane's width; the zoom control
+  // then works by changing what that width is.
+  const params = "#toolbar=0&navpanes=0&scrollbar=0&view=FitH";
+  viewerA.src = previewUrls[0] + params;
+  viewerB.src = previewUrls[1] + params;
+  viewerName.textContent = item.file.name;
+  viewerBefore.textContent = humanBytes(item.file.size);
+  viewerAfter.textContent = humanBytes(item.bytes.length);
+  setZoom("fit");
+  viewer.hidden = false;
+  document.body.classList.add("viewing");
+  document.getElementById("viewerClose").focus();
+}
+
+function closePreview() {
+  viewer.hidden = true;
+  document.body.classList.remove("viewing");
+  // Blanked before revoking: a frame still pointing at a dead blob shows the
+  // browser's own error page for a moment.
+  viewerA.removeAttribute("src");
+  viewerB.removeAttribute("src");
+  for (const url of previewUrls) URL.revokeObjectURL(url);
+  previewUrls = [];
+}
+
+let currentZoom = 100;
+
+/**
+ * Zoom both panes.
+ *
+ * Not by asking the viewer. `#zoom=` is documented, and for a `blob:` URL both
+ * Chrome and Firefox ignore it — the first attempt here passed that fragment and
+ * nothing moved. A built-in viewer cannot be driven from outside, so the thing
+ * that *can* be changed is the box it fits its page into: the iframe is made
+ * wider than its pane and the pane scrolls. The viewer re-fits to the new width
+ * and re-renders the page at that size, so the text stays sharp instead of being
+ * a magnified bitmap — which is what scaling the iframe with a CSS transform
+ * would have given.
+ */
+function setZoom(zoom) {
+  currentZoom = zoom;
+  for (const frame of [viewerA, viewerB]) {
+    if (zoom === "fit") {
+      frame.style.width = "100%";
+      frame.style.height = "100%";
+    } else {
+      frame.style.width = `${zoom}%`;
+      // Height follows width, or a zoomed page is cropped to the pane instead of
+      // becoming scrollable.
+      frame.style.height = `${zoom}%`;
+    }
+  }
+  for (const button of viewer.querySelectorAll(".viewer-zoom button")) {
+    button.setAttribute("aria-pressed", String(String(button.dataset.zoom) === String(zoom)));
+  }
+}
+
+for (const button of viewer.querySelectorAll(".viewer-zoom button")) {
+  button.addEventListener("click", () => setZoom(button.dataset.zoom));
+}
+document.getElementById("viewerClose").addEventListener("click", closePreview);
+// Escape closes it, as it closes everything else that covers the page.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !viewer.hidden) closePreview();
+});
+
+/* Scrolling one pane scrolls the other.
+   The panes are two independent PDF viewers, so nothing links them by itself —
+   and comparing two documents means looking at the same part of both. The guard
+   is what stops the echo: moving pane A moves pane B, whose scroll event would
+   otherwise move A back, and the two would fight each other to a standstill. */
+let syncingScroll = false;
+
+for (const [from, to] of [[viewerA, viewerB], [viewerB, viewerA]]) {
+  from.parentElement.addEventListener("scroll", () => {
+    if (syncingScroll) return;
+    syncingScroll = true;
+    to.parentElement.scrollTop = from.parentElement.scrollTop;
+    to.parentElement.scrollLeft = from.parentElement.scrollLeft;
+    // Released on the next frame rather than immediately: the assignment above
+    // fires the other pane's scroll event asynchronously, and clearing the flag
+    // in the same tick would let it through.
+    requestAnimationFrame(() => { syncingScroll = false; });
+  });
+}
+
 /* ---- The rows ------------------------------------------------------------- */
 function reset(files) {
   for (const url of objectUrls) URL.revokeObjectURL(url);
@@ -619,7 +779,7 @@ function reset(files) {
     row.querySelector(".row-status").textContent = "Queued…";
     list.append(row);
   }
-  results.hidden = false;
+  resultsEmpty.hidden = files.length > 0;
   syncSelection();
 }
 
@@ -640,7 +800,7 @@ function placeRow(row, file, out, images, preset, reused) {
   checkbox.checked = true;
   checkbox.addEventListener("change", syncSelection);
   row.classList.remove("pending");
-  finished.push({ name, bytes: out, row, saved: false });
+  finished.push({ name, bytes: out, row, file, saved: false });
 
   const link = row.querySelector(".row-get");
   link.href = url;
@@ -653,36 +813,46 @@ function placeRow(row, file, out, images, preset, reused) {
     if (item) markSaved([item]);
   });
 
+  const preview = row.querySelector(".row-preview");
+  preview.hidden = false;
+  preview.addEventListener("click", () => {
+    const item = finished.find((f) => f.row === row);
+    if (item) openPreview(item);
+  });
+
   row.classList.add("done");
 
   // Ghostscript can make a file bigger — a PDF that is already one big JPEG
   // gets re-encoded for nothing. Say so instead of showing a negative saving.
   row.querySelector(".row-status").textContent =
     out.length < file.size
-      ? `${humanBytes(file.size)} → ${humanBytes(out.length)}  (−${Math.round((1 - out.length / file.size) * 100)}%)`
-      : `${humanBytes(file.size)} → ${humanBytes(out.length)}  (no smaller)`;
+      ? `${humanBytes(file.size)} → ${humanBytes(out.length)} (~${Math.round((1 - out.length / file.size) * 100)}%)`
+      : `${humanBytes(file.size)} → ${humanBytes(out.length)} (no smaller)`;
 
   // What was actually done to the file. The image count is real — it comes from
   // Ghostscript's own object dump. How many of those were *downsampled* is not
   // reported by Ghostscript and is not claimed here.
   const detail = row.querySelector(".row-detail");
   detail.textContent =
-    `${describeImages(images)} · ${preset.name} · text and vectors intact ✓` +
+    `${describeImages(images)} · ${preset.name} quality` +
     // Said plainly rather than hidden: a row that appears instantly while its
     // neighbours grind looks like a bug unless it explains itself.
     (reused ? " · already compressed" : "");
   return { name, bytes: out, images };
 }
 
-/** "12 images · 9 resized, 3 left as they were" — or less, when there is less
-    to say. The reason an image was left alone is deliberately not claimed: it
+/** "400/417 images resized". Both numbers in one phrase rather than a count and
+    a breakdown: the interesting quantity is the ratio, and spelling out what
+    happened to the remainder took a line to say nothing.
+
+    "text and vectors intact" used to follow this and has gone: it was true of
+    every file at every quality, so it distinguished nothing.
+
+    The *reason* an image was left alone is still deliberately not claimed — it
     depends on the image's placement on the page, which is not read here. */
-function describeImages({ total, resized, kept }) {
+function describeImages({ total, resized }) {
   if (!total) return "No images";
-  const plural = total > 1 ? "s" : "";
-  if (!resized) return `${total} image${plural} · none needed resizing`;
-  if (!kept) return `${total} image${plural} · all resized`;
-  return `${total} images · ${resized} resized, ${kept} left as they were`;
+  return `${resized}/${total} image${total > 1 ? "s" : ""} resized`;
 }
 
 function failRow(row, message) {

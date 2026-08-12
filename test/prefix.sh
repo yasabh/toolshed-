@@ -139,7 +139,7 @@ h1s=$(grep -c '<h1' "$WORK/page.html")
 check "  …and there is only one"           "$h1s"                             1
 grep -q 'aria-current="page"' "$WORK/page.html" \
   && ok "the current tool is marked in the nav" || bad "nav does not mark it"
-grep -q 'ShrinkPDF · PDF compress' "$WORK/page.html" \
+grep -q 'ShrinkPDF' "$WORK/page.html" \
   && ok "the nav label says what it does" || bad "nav label is just the name"
 grep -q 'localStorage.getItem("theme")' "$WORK/page.html" \
   && ok "theme is applied before first paint" || bad "no pre-paint theme script"

@@ -86,6 +86,9 @@ const browser = await puppeteer.launch({
 
 try {
   const page = await browser.newPage();
+  // Puppeteer defaults to 800x600, below the 900px breakpoint — the workbench's
+  // second column would never be exercised at that width.
+  await page.setViewport({ width: 1400, height: 900 });
 
   // Anything the page fetches, so we can prove the wasm was actually served and
   // that nothing was uploaded.
@@ -107,6 +110,81 @@ try {
   chips.length === 4 && chips[0] === "sample.pdf"
     ? ok(`${chips.length} chips, first is ${chips[0]}`)
     : bad(`chips: ${JSON.stringify(chips)}`);
+
+  // ---- The sidebar --------------------------------------------------------
+  const sidebar = () => page.evaluate(() => {
+    const vis = (sel) => {
+      const el = document.querySelector(sel);
+      return !!el && getComputedStyle(el).display !== "none";
+    };
+    return {
+      width: Math.round(document.querySelector(".sidebar").getBoundingClientRect().width),
+      collapsed: document.documentElement.getAttribute("data-sidebar") === "collapsed",
+      labels: vis(".nav-label"), heading: vis(".nav-group-label"), icons: vis(".nav-icon"),
+      account: !!document.querySelector(".account"),
+      expanded: document.getElementById("sidebarToggle").getAttribute("aria-expanded"),
+    };
+  });
+
+  let bar = await sidebar();
+  bar.labels && bar.heading && bar.expanded === "true"
+    ? ok(`sidebar starts open at ${bar.width}px, grouped under a heading`)
+    : bad(`sidebar open: ${JSON.stringify(bar)}`);
+
+  await page.click("#sidebarToggle");
+  // The width is animated, so it has to settle before it is measured — reading
+  // it straight after the click catches the old value and fails a passing app.
+  await page.waitForFunction(
+    () => document.querySelector(".sidebar").getBoundingClientRect().width < 80,
+    { timeout: 5000 }).catch(() => {});
+  bar = await sidebar();
+  // Collapsed keeps the icons and the avatar and drops the words. It must not
+  // become a hamburger that hides the app's structure.
+  bar.collapsed && !bar.labels && !bar.heading && bar.icons && bar.width < 80 &&
+    bar.expanded === "false"
+    ? ok(`collapses to ${bar.width}px keeping the icons`)
+    : bad(`sidebar collapsed: ${JSON.stringify(bar)}`);
+  // Ungated, the gateway sends an empty X-Auth-User — so there is no account
+  // row at all, rather than one permanently reading "Not signed in".
+  !bar.account
+    ? ok("no account row while nobody is signed in")
+    : bad("an account row was rendered without a user");
+
+  await page.reload({ waitUntil: "networkidle0" });
+  bar = await sidebar();
+  bar.collapsed
+    ? ok("the collapsed choice survives a reload")
+    : bad(`after reload: ${JSON.stringify(bar)}`);
+  await page.click("#sidebarToggle");
+  (await sidebar()).collapsed === false
+    ? ok("and it opens again")
+    : bad("could not re-open the sidebar");
+
+  // Re-pick the files the reload cleared, for everything that follows.
+  await (await page.$("#file")).uploadFile("/tmp/sample.pdf", "/tmp/sample1.pdf",
+                                           "/tmp/sample2.pdf", "/tmp/sample3.pdf");
+  await page.waitForSelector(".pick");
+
+  // The workbench is two columns only once there is something to put in the
+  // second one. Declared unconditionally it left an empty column on an untouched
+  // page, and a narrowed form beside dead space reads as a broken width.
+  const layout = await page.evaluate(() => {
+    const bench = document.querySelector(".workbench");
+    const panes = [...bench.children].filter((e) => getComputedStyle(e).display !== "none");
+    const height = (e) => Math.round(e.getBoundingClientRect().height);
+    return {
+      panes: panes.length,
+      // Every panel takes the row's full height — that is the only way the rule
+      // between them reaches the bottom of the tallest one.
+      sameHeight: new Set(panes.map(height)).size === 1,
+      // A rule on each panel after the first, and none on the first.
+      rules: panes.map((e) => getComputedStyle(e).borderLeftWidth),
+    };
+  });
+  layout.panes === 3 && layout.sameHeight &&
+    layout.rules[0] === "0px" && layout.rules.slice(1).every((r) => r === "1px")
+    ? ok(`${layout.panes} panels of equal height, divided by full-height rules`)
+    : bad(`workbench: ${JSON.stringify(layout)}`);
 
   // Dropping outside the dashed box must still land. The browser's default for
   // an unhandled drop is to navigate to the file, which would throw the page and
@@ -172,6 +250,45 @@ try {
     ? ok(`${working.n} row(s) report Compressing while the rest queue`)
     : bad(`working row says "${working.status}"`);
 
+  // The inputs are frozen mid-run: editing the queue would move rows the batch
+  // addresses by index, and changing the quality would leave the picker saying
+  // one thing while another was being produced.
+  const before = await page.evaluate(() =>
+    document.querySelector('.choice input[value="print"]').checked);
+  // A real pointer click, not element.click(): `inert` blocks user interaction —
+  // pointer events, focus, tab order — and never claimed to block a synthetic
+  // call from script. Testing it with radio.click() would test nothing and pass
+  // for the wrong reason.
+  await page.click('.choice input[value="print"]', { timeout: 2000 }).catch(() => {});
+  const locked = await page.evaluate((was) => ({
+    fields: [...document.querySelectorAll("#shrink .field")].every((f) => f.inert),
+    queue: document.getElementById("queue").inert,
+    busy: document.getElementById("shrink").classList.contains("busy"),
+    presetMoved: document.querySelector('.choice input[value="print"]').checked !== was,
+    focusable: document.querySelector("#file").matches(":disabled, [inert] *, [inert]"),
+  }), before);
+  locked.fields && locked.queue && locked.busy && !locked.presetMoved && locked.focusable
+    ? ok("the form is inert while compressing — a real click will not move the picker")
+    : bad(`form during a run: ${JSON.stringify(locked)}`);
+
+  // A drop mid-run must still be swallowed: the browser's default is to navigate
+  // to the file, which would take the running batch with it.
+  const survived = await page.evaluate(async () => {
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([0x25, 0x50])], "mid-run.pdf",
+                            { type: "application/pdf" }));
+    const before = document.querySelectorAll(".pick").length;
+    const event = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data });
+    window.dispatchEvent(event);
+    await new Promise((r) => setTimeout(r, 50));
+    return { prevented: event.defaultPrevented,
+             added: document.querySelectorAll(".pick").length - before,
+             stillHere: !!document.getElementById("shrink") };
+  });
+  survived.prevented && survived.added === 0 && survived.stillHere
+    ? ok("a drop mid-run is swallowed, not taken and not navigated to")
+    : bad(`drop during a run: ${JSON.stringify(survived)}`);
+
   // 15.4 MB of wasm has to arrive and compile before anything happens, so this
   // is generous on purpose.
   await page.waitForSelector(".row.done, .row.failed", { timeout: 180000 });
@@ -226,8 +343,8 @@ try {
 
     // The mixed case: one image above the 200 dpi target, one below it.
     const detail = await page.$eval(".row.done .row-detail", (e) => e.textContent);
-    detail.includes("2 images · 1 resized, 1 left as they were")
-      ? ok(`image breakdown: ${detail.split(" · ").slice(0, 2).join(" · ")}`)
+    detail.includes("1/2 images resized") && detail.includes("Email quality")
+      ? ok(`image breakdown: ${detail}`)
       : bad(`unexpected breakdown: ${detail}`);
   }
 
@@ -250,7 +367,7 @@ try {
     text: document.getElementById("go").textContent,
     disabled: document.getElementById("go").disabled,
   }));
-  !afterSwitch.disabled && afterSwitch.text === "Compress 4"
+  !afterSwitch.disabled && afterSwitch.text === "Compress 4 files"
     ? ok(`changing quality re-arms the button ("${afterSwitch.text}")`)
     : bad(`after switching quality: ${JSON.stringify(afterSwitch)}`);
 
@@ -278,7 +395,7 @@ try {
       ? ok(`Print keeps more than Email (${printBytes} > ${emailBytes})`)
       : bad(`Print (${printBytes}) is not larger than Email (${emailBytes})`);
     const detail = await page.$eval(".row.done .row-detail", (e) => e.textContent);
-    detail.includes("Print (Brochure)")
+    detail.includes("Print (Brochure) quality")
       ? ok(`the row names the preset used`)
       : bad(`row detail does not name the preset: ${detail}`);
     const pname = await page.$eval(".row-get", (e) => e.getAttribute("download"));
@@ -301,8 +418,8 @@ try {
   state.all && state.count.startsWith("4 of 4 selected")
     ? ok(`everything finished starts selected (${state.count})`)
     : bad(`initial selection: ${JSON.stringify(state)}`);
-  state.download === "Download 4 (zip)"
-    ? ok(`the button names its own scope: "${state.download}"`)
+  state.download === "Download (zip)"
+    ? ok(`download button reads "${state.download}"`)
     : bad(`button says "${state.download}"`);
 
   // Untick one: the header must go indeterminate, not stay "all".
@@ -312,8 +429,8 @@ try {
     ? ok(`unticking one gives "${state.count}", header indeterminate`)
     : bad(`after untick: ${JSON.stringify(state)}`);
   state.rows === 3 ? ok("three rows are tinted") : bad(`${state.rows} rows tinted`);
-  state.download === "Download 3 (zip)"
-    ? ok(`button follows the selection: "${state.download}"`)
+  state.download === "Download (zip)"
+    ? ok(`button stays uncluttered: "${state.download}"`)
     : bad(`button says "${state.download}"`);
 
   // Down to one: no zip, because unzipping to get back what you had is a chore.
@@ -323,7 +440,7 @@ try {
     });
   });
   state = await sel();
-  state.download === "Download 1"
+  state.download === "Download"
     ? ok(`one file is not an archive: "${state.download}"`)
     : bad(`button says "${state.download}"`);
 
@@ -381,37 +498,119 @@ try {
     ? ok(`zip is well-formed: PK, ${zip.entries} entries, ${zip.size} bytes`)
     : bad(`zip malformed: ${JSON.stringify(zip)}`);
 
+  // ---- Preview -------------------------------------------------------------
+  await page.evaluate(() => document.querySelector(".row-preview").click());
+  const preview = await page.evaluate(() => {
+    const frames = [...document.querySelectorAll(".viewer-pane iframe")];
+    return {
+      open: !document.getElementById("viewer").hidden,
+      panes: frames.length,
+      // Both panes point at a blob in this page — nothing was uploaded to be
+      // previewed, and no third-party viewer is involved.
+      blobs: frames.every((f) => f.src.startsWith("blob:")),
+      // Left is the original, right the compressed: they must not be the same
+      // document shown twice.
+      distinct: new Set(frames.map((f) => f.src.split("#")[0])).size === 2,
+      // The viewer's own toolbar and thumbnail sidebar are turned off: two sets
+      // of chrome over two documents is most of the window spent on furniture.
+      chromeOff: frames.every((f) => f.src.includes("toolbar=0") &&
+                                     f.src.includes("navpanes=0")),
+      fitH: frames.every((f) => f.src.includes("view=FitH")),
+      sizes: [...document.querySelectorAll(".viewer-pane h3 span")].map((e) => e.textContent),
+    };
+  });
+  preview.open && preview.panes === 2 && preview.blobs && preview.distinct &&
+    preview.fitH && preview.chromeOff
+    ? ok(`preview opens two panes on separate blobs (${preview.sizes.join(" vs ")})`)
+    : bad(`preview: ${JSON.stringify(preview)}`);
+  // One control, both panes — the reason it sits between them. Measured as the
+  // rendered width of each frame, not as a URL fragment: `#zoom=` is ignored for
+  // blob: URLs, which is exactly the bug this replaced.
+  const widthsAt = (zoom) => page.evaluate(async (z) => {
+    document.querySelector(`.viewer-zoom [data-zoom="${z}"]`).click();
+    await new Promise((r) => requestAnimationFrame(r));
+    const panes = [...document.querySelectorAll(".viewer-scroll")];
+    const frames = [...document.querySelectorAll(".viewer-pane iframe")];
+    return {
+      frames: frames.map((f) => Math.round(f.getBoundingClientRect().width)),
+      panes: panes.map((p) => Math.round(p.getBoundingClientRect().width)),
+      scrolls: panes.map((p) => p.scrollWidth > p.clientWidth),
+      pressed: document.querySelector(`.viewer-zoom [data-zoom="${z}"]`).getAttribute("aria-pressed"),
+    };
+  }, zoom);
+
+  const fit = await widthsAt("fit");
+  const at200 = await widthsAt("200");
+  fit.frames[0] === fit.frames[1] && at200.frames[0] === at200.frames[1]
+    ? ok("both panes are always the same width as each other")
+    : bad(`widths fit=${fit.frames} 200=${at200.frames}`);
+  at200.frames[0] > fit.frames[0] * 1.9 && at200.scrolls.every(Boolean)
+    ? ok(`200% really widens both panes (${fit.frames[0]}px → ${at200.frames[0]}px, scrollable)`)
+    : bad(`200% did not zoom: ${JSON.stringify(at200)}`);
+  at200.pressed === "true"
+    ? ok("and the control shows which zoom is active")
+    : bad("zoom button not marked pressed");
+
+  // Comparing two documents means looking at the same part of both, and two
+  // independent viewers are linked by nothing on their own.
+  const synced = await page.evaluate(async () => {
+    const [a, b] = [...document.querySelectorAll(".viewer-scroll")];
+    a.scrollTop = 240;
+    a.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 60));
+    const followed = b.scrollTop;
+    // And back the other way — without the echo guard the two would fight.
+    b.scrollTop = 90;
+    b.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 60));
+    return { followed, back: a.scrollTop, settled: b.scrollTop };
+  });
+  synced.followed === 240 && synced.back === 90 && synced.settled === 90
+    ? ok("scrolling either pane moves the other, without them fighting")
+    : bad(`scroll sync: ${JSON.stringify(synced)}`);
+
+  // Escape closes it, and the blobs go with it rather than accumulating.
+  await page.keyboard.press("Escape");
+  const closed = await page.evaluate(() => ({
+    hidden: document.getElementById("viewer").hidden,
+    srcs: [...document.querySelectorAll(".viewer-pane iframe")].map((f) => f.getAttribute("src")),
+  }));
+  closed.hidden && closed.srcs.every((v) => v === null)
+    ? ok("Escape closes the preview and releases both blobs")
+    : bad(`after Escape: ${JSON.stringify(closed)}`);
+
   // ---- Nothing is lost silently --------------------------------------------
   // The listener is added and removed rather than left in place, so its presence
   // is the assertion: a page that always asks is one people learn to click past.
-  const risk = () => page.evaluate(() => ({
-    warn: document.getElementById("notDownloaded").textContent,
-    // getEventListeners is a devtools-only API, so the guard is observed the way
-    // a browser exposes it: onbeforeunload stays null, but a registered listener
-    // makes the page require confirmation. Puppeteer cannot read that directly,
-    // so the visible counter is the proxy — it is driven by the same predicate.
-  }));
+  // Dispatching the event is how the guard is observed: the handler calls
+  // preventDefault, which is exactly what makes a browser ask before leaving.
+  // Nothing is rendered for this any more, so there is no text to read instead.
+  const risk = () => page.evaluate(() => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return { asks: event.defaultPrevented };
+  });
 
   await page.evaluate(() => document.querySelectorAll(".row .row-sel")
     .forEach((c) => { if (!c.checked) c.click(); }));
   let r = await risk();
-  r.warn === "4 not downloaded yet"
-    ? ok(`unsaved results are counted: "${r.warn}"`)
-    : bad(`unsaved counter says "${r.warn}"`);
+  r.asks
+    ? ok("closing the tab is challenged while results are unsaved")
+    : bad("leaving was not challenged with unsaved results");
 
   // Downloading one row marks that one, and only that one, as taken.
   await page.evaluate(() => document.querySelector(".row-get").click());
   r = await risk();
-  r.warn === "3 not downloaded yet"
-    ? ok(`a per-row download counts as saved: "${r.warn}"`)
-    : bad(`after one download: "${r.warn}"`);
+  r.asks
+    ? ok("still challenged while three of four are unsaved")
+    : bad("stopped challenging after only one was saved");
 
   // Download the rest as a zip; nothing is then at risk.
   await page.evaluate(() => document.getElementById("downloadSelected").click());
   r = await risk();
-  r.warn === ""
-    ? ok("downloading everything clears the warning")
-    : bad(`after downloading all: "${r.warn}"`);
+  !r.asks
+    ? ok("and stops once everything has been downloaded")
+    : bad("still challenging after everything was saved");
 
   // The claim on the page is that nothing is uploaded. This is what checks it.
   const uploads = requests.filter((r) => r.method !== "GET");
@@ -424,9 +623,16 @@ try {
   // that it fetched and compiled the wasm. That the wasm is served correctly
   // (application/wasm, cacheable) is a server concern and lives in prefix.sh.
   ok(`pool sized from ${await page.evaluate(() => navigator.hardwareConcurrency)} cores`);
-  const offsite = requests.filter((r) => !r.url.startsWith(BASE.replace(/\/[^/]*$/, "")) &&
-                                         !r.url.startsWith("blob:") &&
-                                         !r.url.startsWith("data:"));
+  const offsite = requests.filter((r) =>
+    !r.url.startsWith(BASE.replace(/\/[^/]*$/, "")) &&
+    !r.url.startsWith("blob:") &&
+    !r.url.startsWith("data:") &&
+    // The built-in PDF viewer pulls its own assets over chrome:// and
+    // chrome-extension://. That is the browser rendering the preview — the whole
+    // point of using it rather than rendering the pages ourselves — and none of
+    // it leaves the machine. Anything with a remote host still fails this, which
+    // is what the assertion is actually for.
+    !/^chrome(-extension)?:/.test(r.url));
   offsite.length === 0 ? ok("no third-party requests")
                        : bad(`off-site: ${offsite.map((r) => r.url).join(", ")}`);
 

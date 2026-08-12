@@ -28,43 +28,72 @@ body { margin:0; font-family:system-ui,sans-serif;
 /* ---- Shell: sidebar + pane ------------------------------------------------ */
 .shell { display:flex; min-height:100vh; }
 
-.sidebar { flex:none; width:232px; display:flex; flex-direction:column; gap:4px;
-           padding:14px 10px; border-right:1px solid var(--field-br);
+.sidebar { flex:none; width:236px; display:flex; flex-direction:column;
+           padding:14px 12px; border-right:1px solid var(--field-br);
            background:color-mix(in srgb, var(--fg) 4%, var(--bg));
            transition:width .18s; }
 /* Collapsed keeps the icons and drops the labels — the nav stays usable and the
    app's structure stays on screen. It is not a hamburger. */
-:root[data-sidebar="collapsed"] .sidebar { width:60px; }
+:root[data-sidebar="collapsed"] .sidebar { width:62px; padding:14px 8px; }
 :root[data-sidebar="collapsed"] .nav-label,
-:root[data-sidebar="collapsed"] .brand-name { display:none; }
-:root[data-sidebar="collapsed"] .collapse-btn svg { transform:scaleX(-1); }
+:root[data-sidebar="collapsed"] .brand-name,
+:root[data-sidebar="collapsed"] .nav-group-label,
+:root[data-sidebar="collapsed"] .account-who { display:none; }
 
-.brand { display:flex; align-items:center; gap:10px; padding:8px 10px 14px;
-         font-size:15px; font-weight:600; letter-spacing:-.01em; }
+/* Brand row: mark, name, and the collapse control at the far end. Collapsed it
+   stacks, because a 62px column has no far end. */
+.brand { display:flex; align-items:center; gap:10px; padding:6px 8px 16px; }
 .brand-mark { display:grid; place-items:center; flex:none; width:24px; height:24px;
               color:var(--accent); }
-.brand-mark svg { width:20px; height:20px; }
+.brand-mark svg { width:21px; height:21px; }
+.brand-name { font-size:15px; font-weight:600; letter-spacing:-.01em; }
+.collapse-btn { margin-left:auto; display:grid; place-items:center; flex:none;
+                width:28px; height:28px; padding:0; border:0; border-radius:8px;
+                cursor:pointer; background:none; color:var(--muted);
+                transition:background .15s, color .15s; }
+.collapse-btn:hover { background:var(--field-bg); color:var(--fg); }
+.collapse-btn svg { width:17px; height:17px; transition:transform .18s; }
+:root[data-sidebar="collapsed"] .brand { flex-direction:column; gap:12px; padding:6px 0 14px; }
+:root[data-sidebar="collapsed"] .collapse-btn { margin:0; }
+:root[data-sidebar="collapsed"] .collapse-btn svg { transform:scaleX(-1); }
 
-.sidebar nav { display:flex; flex-direction:column; gap:3px; }
-.nav-item { display:flex; align-items:center; gap:11px; padding:10px;
-            border-radius:10px; font-size:13.5px; font-weight:500;
-            color:var(--fg); text-decoration:none; white-space:nowrap;
+/* A named group of tools. The label is the heading; collapsed, the rule takes
+   its place, so a group still reads as a group with no words left. */
+.nav-group { display:flex; flex-direction:column; gap:2px; margin-bottom:18px; }
+.nav-group-label { padding:0 10px 6px; font-size:11px; font-weight:600;
+                   letter-spacing:.04em; color:var(--muted); }
+.nav-group-rule { display:none; height:1px; margin:2px 10px 8px;
+                  background:var(--field-br); }
+:root[data-sidebar="collapsed"] .nav-group-rule { display:block; }
+:root[data-sidebar="collapsed"] .nav-group:first-child .nav-group-rule { display:none; }
+
+.nav-item { display:flex; align-items:center; gap:11px; padding:9px 10px;
+            border-radius:9px; font-size:14px; font-weight:450;
+            color:var(--muted); text-decoration:none; white-space:nowrap;
             transition:background .15s, color .15s; }
-.nav-item:hover { background:var(--field-bg); }
-/* The current tool, marked so a deep link is legible without reading the URL. */
-.nav-item.on { background:color-mix(in srgb, var(--accent) 16%, var(--field-bg));
-               color:var(--fg); font-weight:600;
-               box-shadow:inset 2px 0 0 var(--accent); }
+.nav-item:hover { background:var(--field-bg); color:var(--fg); }
+/* The current tool: the icon takes the accent and the label goes solid. No
+   filled pill — with one item per group a block of colour reads as a button
+   rather than as "you are here". */
+.nav-item.on { color:var(--fg); font-weight:600; }
+.nav-item.on .nav-icon { color:var(--accent); }
 .nav-icon { display:grid; place-items:center; flex:none; width:20px; height:20px; }
 .nav-icon svg { width:19px; height:19px; }
-.nav-item.on .nav-icon { color:var(--accent); }
+:root[data-sidebar="collapsed"] .nav-item { justify-content:center; padding:9px 0; }
 
-.collapse-btn { margin-top:auto; display:flex; align-items:center; gap:11px;
-                padding:10px; border:0; border-radius:10px; cursor:pointer;
-                background:none; color:var(--muted); font:500 13px system-ui,sans-serif;
-                white-space:nowrap; transition:background .15s, color .15s; }
-.collapse-btn:hover { background:var(--field-bg); color:var(--fg); }
-.collapse-btn svg { transition:transform .18s; }
+/* Pushed to the bottom: the last thing in the column, as in every app that has
+   one, and out of the header where it was competing with the page title. */
+.sidebar nav { flex:1; }
+.account { margin-top:auto; display:flex; align-items:center; gap:10px;
+           padding:10px 8px 4px; border-top:1px solid var(--field-br); }
+.avatar { display:grid; place-items:center; flex:none; width:32px; height:32px;
+          border-radius:50%; font:600 12px/1 system-ui,sans-serif; color:#fff;
+          background:var(--accent); }
+.account-who { display:flex; flex-direction:column; min-width:0; }
+.account-name { font-size:13px; font-weight:600; overflow:hidden;
+                text-overflow:ellipsis; white-space:nowrap; }
+.account-sub { font-size:11.5px; color:var(--muted); }
+:root[data-sidebar="collapsed"] .account { justify-content:center; padding:10px 0 4px; }
 
 .pane { flex:1; min-width:0; display:flex; flex-direction:column; }
 
@@ -76,7 +105,6 @@ header .spacer { flex:1; }
    Reset because an <h1> arrives with browser margins and a size of its own. */
 .page-title { margin:0; font-size:clamp(18px,2.4vw,22px); font-weight:600;
               letter-spacing:-.015em; }
-.whoami { font-size:12.5px; font-weight:400; color:var(--muted); }
 
 .theme-toggle { display:grid; place-items:center; width:38px; height:38px;
                 padding:0; border-radius:999px; cursor:pointer;
@@ -91,38 +119,60 @@ header .spacer { flex:1; }
 .content { padding:6px 20px 32px; }
 .lede { margin:0 0 22px; font-size:14px; line-height:1.55; color:var(--muted); }
 
-/* One card, two columns: the controls on the left, the queue of picked files on
-   the right. One column until there is room for two — below that the queue
-   simply follows the controls, which is the reading order anyway. */
-.card-grid { display:grid; gap:20px; align-items:start;
-             grid-template-columns:minmax(0,1fr); }
-.card-main { min-width:0; }
-@media (min-width: 900px) {
-  .card-grid { grid-template-columns:minmax(0,1.35fr) minmax(260px,1fr); gap:24px; }
-  /* A rule rather than a second card: they are one box, and the border is what
-     says the queue belongs to the form beside it. */
-  .card-grid > .queue { border-left:1px solid var(--field-br); padding-left:24px; }
+/* Three panels — the controls, what is waiting, what came out — inside **one**
+   surface rather than three floating boxes. That is what lets the rules between
+   them run the full height: a border on a separate card is only ever as tall as
+   that card, and with three different lengths of content the lines would stop at
+   three different points.
+   Flex rather than a grid with :has() rules: a panel that is `hidden` simply
+   stops participating, so the row is one, two or three columns depending on how
+   far through the job the user is, with nothing to declare per case.
+   Stacked below 1000px, where a vertical rule has nothing to divide. */
+.workbench { display:flex; flex-direction:column; gap:20px;
+             padding:20px; border-radius:14px;
+             background:color-mix(in srgb, var(--fg) 4%, var(--bg)); }
+.workbench > .card { flex:1 1 0; min-width:0; padding:0; border-radius:0;
+                     background:none; }
+.empty { margin:0; padding:14px 0; font-size:13px; color:var(--muted); }
+.empty[hidden] { display:none; }
+.results-bar[hidden], .queue-clear[hidden] { display:none; }
+.workbench > .card + .card { border-top:1px solid var(--field-br); padding-top:20px; }
+
+@media (min-width: 1000px) {
+  /* stretch, not flex-start: each panel takes the row's full height, which is
+     the only way the dividing rule reaches the bottom of the tallest one. */
+  .workbench { flex-direction:row; align-items:stretch; gap:0; }
+  .workbench > .card { padding:0 20px; }
+  .workbench > .card:first-child { padding-left:0; }
+  .workbench > .card:last-child { padding-right:0; }
+  .workbench > .card + .card { border-top:0; padding-top:0;
+                               border-left:1px solid var(--field-br); }
+  /* The controls carry the most: a drop zone, two quality options, a button. */
+  .workbench > form.card { flex:1.15 1 0; }
 }
-.queue { display:flex; flex-direction:column; min-width:0; }
-.queue[hidden] { display:none; }
-.queue-head { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
-.queue-head h2 { margin:0; font-size:13px; font-weight:600; }
+
+.panel-head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.panel-head h2 { margin:0; font-size:13px; font-weight:600; }
+
+.queue, .results { display:flex; flex-direction:column; min-width:0; }
 .queue-clear { margin-left:auto; padding:4px 10px; border:0; border-radius:8px;
                cursor:pointer; background:none; color:var(--muted);
                font:500 12px system-ui,sans-serif; transition:background .15s, color .15s; }
 .queue-clear:hover { background:var(--field-bg); color:var(--fg); }
-/* The list scrolls, not the card: twenty files must not stretch the page, and
-   the Compress button must stay where it was. */
+/* The list scrolls, not the panel: twenty files must not stretch the page, and
+   the Compress button beside it must stay where it was. */
 .queue .picks { flex-direction:column; flex-wrap:nowrap; gap:6px; margin:0;
-                max-height:min(46vh, 400px); overflow-y:auto;
+                max-height:min(46vh, 420px); overflow-y:auto;
                 /* Room for the scrollbar so it never sits on top of a chip. */
                 padding-right:4px; }
 .queue .pick { max-width:none; }
 .queue .pick-name { flex:1; }
 
 /* ---- Cards and fields ----------------------------------------------------- */
-.card { padding:20px; border:1px solid var(--field-br); border-radius:14px;
-        background:color-mix(in srgb, var(--fg) 3%, var(--bg)); }
+/* No border: with three panels side by side, three outlines made a page of
+   boxes. The surface tint alone is enough to say where one ends. */
+.card { padding:20px; border:0; border-radius:14px;
+        background:color-mix(in srgb, var(--fg) 4%, var(--bg)); }
 .field { margin:0 0 20px; padding:0; border:0; }
 .field > label, .field > legend { display:block; padding:0; margin:0 0 8px;
         font-size:13px; font-weight:600; }
@@ -229,8 +279,13 @@ body.dragging .drop { border-color:var(--accent);
        border:1px solid #e0555566; background:#e0555518;
        color:#ff6b6b; font-size:13px; }
 
+/* While a batch runs the inputs are inert (see lockForm). Dimmed so the page
+   says so rather than leaving controls that look live and do nothing. */
+.card.busy .field { opacity:.5; }
+.queue[inert] { opacity:.5; }
+
 /* ---- Results -------------------------------------------------------------- */
-.results { margin-top:26px; }
+.results { display:flex; flex-direction:column; min-width:0; }
 
 /* No border and no fill: this is a row of controls, not a panel. The rules
    around it were fighting the result cards below for attention. */
@@ -242,13 +297,9 @@ body.dragging .drop { border-color:var(--accent);
 .results-count { font-size:13px; color:var(--muted); }
 /* The batch outcome. Pushed to the right so the selection reads as one group on
    the left and this as a separate, persistent fact. */
-/* What would be lost by closing the tab. Amber, not red: nothing has gone wrong
-   yet, and this is the same thing the browser will ask about on the way out. */
-.results-warn { font-size:13px; font-weight:600; color:#d99e2b; }
-.results-warn:empty { display:none; }
-.results-total { margin-left:auto; font-size:13px; color:var(--muted);
+.results-total { flex-basis:100%; font-size:13px; color:var(--muted);
                  font-variant-numeric:tabular-nums; }
-.results-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.results-actions { flex-basis:100%; display:flex; gap:8px; flex-wrap:wrap; }
 
 /* Drawn by hand: the native checkbox follows the OS colour-scheme and shows up
    dark on the light theme. Same trick as tv-webui's. */
@@ -271,17 +322,22 @@ body.dragging .drop { border-color:var(--accent);
 .ghost:hover:not(:disabled) { background:var(--field-bg); }
 .ghost:disabled { opacity:.45; cursor:not-allowed; }
 .ghost svg { width:15px; height:15px; }
-.result-list { margin:0; padding:0; list-style:none; display:grid; gap:8px;
-               grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); }
+.result-list { margin:0; padding:0; list-style:none; display:flex;
+               flex-direction:column; gap:8px;
+               max-height:min(52vh, 480px); overflow-y:auto; padding-right:4px; }
 
 /* One row per file. The columns are named so the grid reads as the row does:
    name, status, the bar, and the way to get the file. It collapses to two rows
    on a narrow screen rather than squeezing four columns into a phone. */
-.row { display:grid; gap:2px 12px; align-items:start;
-       grid-template-columns:16px 16px minmax(0,1fr) auto;
-       grid-template-areas:"sel mark name   get"
-                           "sel mark status get"
-                           "sel mark detail get";
+/* The outcome sits at the end of the row, beside the action, rather than in a
+   gutter on the left: a tick is the answer to "did this work", and the answer
+   belongs after the question, not before it. */
+.row { display:grid; gap:2px 10px; align-items:start;
+       grid-template-columns:16px minmax(0,1fr) auto;
+       grid-template-areas:"sel name   name"
+                           "sel status status"
+                           "sel detail detail"
+                           "sel get    mark";
        padding:12px 16px; border:1px solid var(--field-br); border-radius:12px;
        background:color-mix(in srgb, var(--fg) 3%, var(--bg)); }
 /* The whole row tints, not just the box: the tick can sit 300px from the button
@@ -298,8 +354,9 @@ body.dragging .drop { border-color:var(--accent);
 .row-detail { grid-area:detail; font-size:12px; color:var(--muted); }
 /* Spinner while the worker has it, then the outcome. One element, three
    states, so a row cannot show a tick and a spinner at once. */
-.row-mark { grid-area:mark; width:16px; height:16px; margin-top:3px;
-            display:grid; place-items:center; box-sizing:border-box; }
+.row-mark { grid-area:mark; justify-self:end; align-self:center; margin-top:5px;
+            width:16px; height:16px; display:grid; place-items:center;
+            box-sizing:border-box; }
 /* Spinning means a worker has it. A queued row shows a still ring instead —
    with three workers, three rows spin and the rest wait, which is the truth. */
 .row.working .row-mark {
@@ -317,8 +374,8 @@ body.dragging .drop { border-color:var(--accent);
 @media (prefers-reduced-motion: reduce) {
   .row.working .row-mark { animation:none; }
 }
-.row-get    { grid-area:get; align-self:center; font-size:13px; font-weight:600;
-              text-decoration:none; color:var(--accent); white-space:nowrap; }
+.row-get    { font-size:13px; font-weight:600; text-decoration:none;
+              color:var(--accent); white-space:nowrap; }
 .row-get:hover { text-decoration:underline; }
 
 /* Nothing to draw to scale until it is done, and a red row's bar would read as
@@ -326,6 +383,55 @@ body.dragging .drop { border-color:var(--accent);
 .row.failed { border-color:#e0555566; background:#e0555514; }
 .row.failed .row-status { color:#ff6b6b; }
 
+
+/* ---- Preview ---------------------------------------------------------------
+   Full screen, because the point is to look closely at two documents at once and
+   anything smaller defeats it. */
+.viewer { position:fixed; inset:0; z-index:600; display:flex; flex-direction:column;
+          background:var(--bg); }
+.viewer[hidden] { display:none; }
+body.viewing { overflow:hidden; }
+
+.viewer-bar { display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+              padding:12px 16px; border-bottom:1px solid var(--field-br); }
+.viewer-name { font-size:14px; font-weight:600; overflow:hidden;
+               text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+/* Centred between the name and the close button: it governs both panes, so it
+   should not sit above either one. */
+.viewer-zoom { margin:0 auto; display:inline-flex; padding:3px; border-radius:10px;
+               background:var(--field-bg); }
+.viewer-zoom button { padding:6px 12px; border:0; border-radius:7px; cursor:pointer;
+                      background:none; color:var(--muted);
+                      font:600 12.5px system-ui,sans-serif; }
+.viewer-zoom button[aria-pressed="true"] { background:var(--bg); color:var(--fg); }
+.viewer-close { display:grid; place-items:center; width:32px; height:32px; padding:0;
+                border:0; border-radius:8px; cursor:pointer; background:var(--field-bg);
+                color:var(--fg); font-size:14px; }
+.viewer-close:hover { background:#e05555; color:#fff; }
+
+.viewer-panes { flex:1; min-height:0; display:grid; gap:1px;
+                grid-template-columns:1fr 1fr; background:var(--field-br); }
+.viewer-pane { display:flex; flex-direction:column; min-width:0; min-height:0;
+               background:var(--bg); }
+.viewer-pane h3 { margin:0; padding:8px 14px; font-size:12px; font-weight:600;
+                  color:var(--muted); border-bottom:1px solid var(--field-br); }
+.viewer-pane h3 span { font-weight:400; font-variant-numeric:tabular-nums; }
+.viewer-scroll { flex:1; min-height:0; overflow:auto; background:var(--field-bg); }
+.viewer-pane iframe { display:block; width:100%; height:100%; border:0; }
+.viewer-note { margin:0; padding:8px 16px; font-size:11.5px; color:var(--muted);
+               border-top:1px solid var(--field-br); }
+/* Stacked on a phone: two PDF viewers side by side on 400px is neither. */
+@media (max-width: 800px) {
+  .viewer-panes { grid-template-columns:1fr; grid-template-rows:1fr 1fr; }
+}
+
+/* The two actions at the end of a result row. */
+.row-actions { grid-area:get; display:flex; align-items:center; gap:14px;
+               margin-top:5px; }
+.row-preview { padding:0; border:0; background:none; cursor:pointer;
+               color:var(--accent); font:600 13px system-ui,sans-serif; }
+.row-preview:hover, .row-get:hover { text-decoration:underline; }
+.row-preview[hidden], .row-get[hidden] { display:none; }
 
 /* ---- Toast notices — tv-webui's, verbatim --------------------------------- */
 #notices { position:fixed; left:50%; bottom:24px; transform:translateX(-50%);

@@ -9,7 +9,10 @@ services:
     networks: [edge]          # gateway reaches us here; no `ports:` — ever
     restart: unless-stopped
     environment:
-      TZ: Europe/Budapest     # the deployment is in Hungary
+      # Where this is deployed, not a property of the image — and the only
+      # place it is set. The image installs tzdata so this resolves; alpine
+      # ships none, and a TZ with no data behind it silently means UTC.
+      TZ: Europe/Budapest
     # Nothing heavy runs here — Ghostscript moved into the browser — so these
     # bound a process that renders three templates and serves static files.
     # No `mem_limit`: this host's kernel carries `cgroup_disable=memory`,

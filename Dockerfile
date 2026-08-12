@@ -11,8 +11,15 @@ LABEL org.opencontainers.image.title="toolshed" \
       org.opencontainers.image.source="https://github.com/yasabh/toolshed-" \
       org.opencontainers.image.licenses="AGPL-3.0"
 
-ENV NODE_ENV=production \
-    TZ=Europe/Budapest
+# Alpine ships no timezone data, so a TZ on its own resolves to nothing and the
+# container silently runs on UTC. Installed because the value is meant to be
+# true: without it `TZ=Europe/Budapest` is a setting that reads as configured and
+# behaves as unset, which is worse than not setting it.
+RUN apk add --no-cache tzdata
+
+# TZ itself is not set here. It is a property of where this is deployed, not of
+# the image, and docker-compose.yml is the one place that says so.
+ENV NODE_ENV=production
 
 WORKDIR /srv
 
