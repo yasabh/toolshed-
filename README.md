@@ -6,8 +6,9 @@ Small self-hosted utilities behind the gatekeeper edge.
 | --- | --- | --- |
 | `<prefix>/pdf` | ShrinkPDF | Compress PDFs — **in the browser**, nothing uploaded |
 
-FastAPI + Jinja2, server-rendered. No JS build step and no bundler: the static
-modules load as-is, so the image is one stage and there is nothing to compile.
+**Pure Node, no dependencies** — the same shape as tvremotehub's webapp, so the
+two services read alike and there is no supply chain to audit for something that
+renders three templates. `node:22-alpine`, no build step, no bundler.
 
 **ShrinkPDF does its work on the user's machine.** Ghostscript is compiled to
 WebAssembly and runs in a Web Worker; the server only ships the page and the
@@ -29,18 +30,17 @@ asserts that a POST to it is a 405.
 docker compose up -d --build
 ```
 
-> **Prefix:** CLAUDE.md says `/tools/`, the access contract says `/toolshed/`.
-> Nothing in this app knows either string — it reads whichever
-> `X-Forwarded-Prefix` the gateway sends — so the harness exercises both. The
-> gatekeeper block still has to pick one.
+> **Prefix:** `/toolshed/`. Nothing in this app knows that string — it reads
+> whichever `X-Forwarded-Prefix` the gateway sends, and `./test/prefix.sh /tools`
+> still passes, which is how that stays true rather than merely intended.
 
 ### Why "no published ports" is a security requirement
 
 `X-Auth-User` can be trusted only because nginx overwrites it on every proxied
 hop. Publish a port and anything on the LAN can set that header itself, arriving
-past the gate as whoever it likes. The same reasoning holds up
-`BodyLimitMiddleware`, which trusts Content-Length because nginx buffers a
-proxied body and computes it. Both guarantees end the moment `:8080` is
+past the gate as whoever it likes. The same reasoning holds up `lib/limits.js`,
+which trusts Content-Length because nginx buffers a proxied body and computes
+it. Both guarantees end the moment `:8080` is
 reachable directly.
 
 ## Prove it
@@ -48,13 +48,13 @@ reachable directly.
 ```sh
 ./test/prefix.sh              # both prefixes + headless browser, in docker
 SKIP_BROWSER=1 ./test/prefix.sh   # server side only, much quicker
-python3 test/test_next.py     # pure unit test, no container needed
+node test/test-next.mjs       # pure unit test, needs only node
 ./test/vendor.sh              # re-fetch the vendored Ghostscript-WASM
 ```
 
-`prefix.sh` builds the real image, puts it behind an nginx that mirrors
-gatekeeper's block, and asserts the whole contract — 79 checks — then drives the page in a **real
-headless Chromium** for 11 more. That second stage is not optional polish: the
+`prefix.sh` runs the `safeNext` unit test, builds the real image, puts it behind
+an nginx that mirrors gatekeeper's block, and asserts the whole contract — 51
+checks — then drives the page in a **real headless Chromium** for 20 more. That second stage is not optional polish: the
 vendored Ghostscript is compiled `ENVIRONMENT=web` and refuses to load anywhere
 else, so a browser is the only thing that can prove the tool works at all. It
 also checks the privacy claim directly, by asserting that every request the page
@@ -96,8 +96,8 @@ location /toolshed/ {
     proxy_set_header X-Forwarded-Prefix /toolshed;  # how this app builds URLs
     proxy_set_header X-Auth-User        "";         # ungated for now
 
-    client_max_body_size 120m;   # >= the app's own 100 MB cap, or nginx
-                                 # refuses the upload with its own error page
+    # Nothing is uploaded any more, so this only has to be large enough that
+    # nginx never becomes the reason a request is refused.
 }
 ```
 
@@ -107,29 +107,33 @@ is unprefixed, and `test/prefix.sh` is what says so.
 ## How it hangs together
 
 ```
-app/
-  main.py      the shell: middleware order, static mount, one route per tool
-  prefix.py    X-Forwarded-Prefix in, url() out — read before adding any URL
-  links.py     safe_next(); pure, no framework, so it unit-tests on its own
-  csrf.py      fetch-metadata check + double-submit token
-  limits.py    refuse an oversized body before anything reads it
-  gate.py      the auth gate, deliberately empty; see below
-  registry.py  what the shell needs to know about a tool
-  render.py    the only way to render a page, so nothing loses url() or the token
-  tools/       __init__.py is the registry; pdf.py is ShrinkPDF
-  templates/   base.html is the sidebar + header; one file per tool
-  static/      style.css, app.js (shell), pdf.js (tool)
-  static/presets.js    the target-quality presets — labels, filename
-                       suffixes and gs flags in one place, imported by both
-                       the page and the worker so they cannot drift
-  static/pdf-images.js finds image XObjects by reading the PDF bytes
-  static/gs-worker.js  Ghostscript, off the main thread
-  static/vendor/       ghostscript-wasm-esm, committed; see test/vendor.sh
+server.js      the router, in the order a request meets things
+lib/
+  prefix.js    X-Forwarded-Prefix in, url() out — read before adding any URL
+  links.js     safeNext(); pure, no imports, so it unit-tests on its own
+  csrf.js      fetch-metadata check + double-submit token
+  limits.js    refuse an oversized body before anything reads it
+  static.js    public/ with ETag, 304 and Range; caching decided per path
+  gate.js      the auth gate, deliberately empty; see below
+  registry.js  the tool list the sidebar and routes are built from
+  render.js    the only way to render a page, so nothing loses the prefix
+  tools/pdf.js ShrinkPDF — a description of a page, and nothing else
+templates/     base.html is the sidebar + header; one fragment per tool
+public/
+  style.css      the shell
+  app.js         theme toggle, sidebar, notices
+  pdf.js         ShrinkPDF's page: the worker pool and the UI
+  presets.js     the target-quality presets — labels, filename suffixes and gs
+                 flags in one place, imported by the page and the worker so
+                 they cannot drift
+  pdf-images.js  finds image XObjects by reading the PDF bytes
+  gs-worker.js   Ghostscript, off the main thread
+  vendor/        ghostscript-wasm-esm, committed; see test/vendor.sh
 test/
   prefix.sh        the end-to-end proof
   browser-test.mjs the same, in a real Chromium — the only thing that can
                    prove the client-side half
-  test_next.py     safe_next() against every bypass it has to survive
+  test-next.mjs    safeNext() against every bypass it has to survive
   nginx.conf       gatekeeper's block, reproduced
   vendor.sh        fetches the wasm; run only to change version
 ```
@@ -152,7 +156,7 @@ dpi photo to 300 costs real quality and saves very little.
 
 ### Counting images without asking Ghostscript
 
-`static/pdf-images.js` reads image dictionaries straight out of the PDF, before
+`public/pdf-images.js` reads image dictionaries straight out of the PDF, before
 and after, so the result row can say *"12 images · 9 resized, 3 left as they
 were"*. It works because of one rule: an object with a stream may not live inside
 an object stream, and every image XObject has one — so image dictionaries are
@@ -179,12 +183,22 @@ re-fetches it and records checksums in `VENDOR.txt`.
 It is **AGPL-3.0**, like Ghostscript itself. Serving it to a browser is
 distribution, so the licence ships beside it and is linked from the tool's page.
 
-Adding a tool is: write `app/tools/<id>.py` exposing a `TOOL`, add a template,
-list it in `app/tools/__init__.py`. Sidebar, route and `<h1>` all come from that
-one entry, so a tool cannot be reachable but unlisted. The cross-cutting rules
-live in middleware rather than in handlers, so a new tool gets the body cap and
-the cross-site check without doing anything, and fails its own POST loudly if it
-forgets the CSRF field.
+Adding a tool is: write `lib/tools/<id>.js` exporting a `TOOL`, add a template
+fragment, list it in `lib/registry.js`. Sidebar, route and `<h1>` all come from
+that one entry, so a tool cannot be reachable but unlisted. The cross-cutting
+rules live in `server.js` ahead of the routes, so a new tool gets the body cap
+and the cross-site check without doing anything.
+
+### Why no Express
+
+Express would earn its place for one thing here — `express.static`, which is
+battle-tested where `lib/static.js` is hand-written. The rest it would not:
+there are six routes, no request bodies at all, and a template engine would
+still have to be chosen separately. Against that, it is ~30 transitive packages
+in a service that serves nine files from behind a gate. `lib/static.js` covers
+what actually matters for these assets — correct MIME (`application/wasm` or the
+browser cannot stream-compile), ETag/304, and Range so an interrupted 15.4 MB
+download resumes rather than restarting.
 
 ### URLs
 
@@ -245,7 +259,7 @@ down with it.
   outright rather than stripping them, then normalises the way a browser does
   *before* testing — trimming, folding backslashes — because `//evil.com`,
   `/\evil.com`, `/\t/evil.com` and `" //evil.com"` all get past a
-  `startswith("/")` test. `test/test_next.py` covers each.
+  `startswith("/")` test. `test/test-next.mjs` covers each.
 - **CSRF on every POST**, in two layers. `Sec-Fetch-Site`/`Origin` are checked
   in middleware, before the body is read, so a cross-site 100 MB upload is
   refused rather than parsed; a double-submit cookie token is checked in the

@@ -1,0 +1,12 @@
+{
+  "name": "toolshed",
+  "version": "1.0.0",
+  "description": "Small self-hosted utilities behind the gatekeeper edge",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/test-next.mjs"
+  }
+}

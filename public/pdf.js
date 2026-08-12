@@ -13,6 +13,8 @@ const input = document.getElementById("file");
 const drop = document.getElementById("drop");
 const dropText = document.getElementById("dropText");
 const picks = document.getElementById("picks");
+const queue = document.getElementById("queue");
+const clearPicks = document.getElementById("clearPicks");
 const pickTemplate = document.getElementById("pickTemplate");
 const go = document.getElementById("go");
 const results = document.getElementById("results");
@@ -181,6 +183,9 @@ function syncInput() {
 
 function renderPicks() {
   drop.classList.toggle("has-file", picked.length > 0);
+  // The pane only exists once there is something in it; an empty box beside the
+  // form is furniture.
+  queue.hidden = picked.length === 0;
   dropText.textContent = picked.length
     ? `${picked.length} file${picked.length > 1 ? "s" : ""} — ${humanBytes(
         picked.reduce((sum, f) => sum + f.size, 0))} in total`
@@ -229,6 +234,12 @@ for (const type of ["dragenter", "dragover"]) {
 for (const type of ["dragleave", "drop"]) {
   drop.addEventListener(type, () => drop.classList.remove("drag"));
 }
+clearPicks.addEventListener("click", () => {
+  picked = [];
+  syncInput();
+  renderPicks();
+});
+
 drop.addEventListener("drop", (e) => {
   e.preventDefault();
   if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);

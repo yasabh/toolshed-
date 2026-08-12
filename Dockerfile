@@ -1,55 +1,42 @@
+# Pure Node, no dependencies, alpine — same shape as tvremotehub's webapp.
+# Alpine is safe here precisely because there are no dependencies: nothing native
+# to compile, so musl never comes into it.
+#
 # Ordered most-stable first, so that editing a template rebuilds as little as
-# possible: metadata -> user -> dependencies -> vendored wasm -> app code.
-FROM python:3.13-slim
+# possible: metadata -> vendored wasm -> server code.
+FROM node:22-alpine
 
 LABEL org.opencontainers.image.title="toolshed" \
       org.opencontainers.image.description="Small self-hosted utilities behind the gatekeeper edge" \
       org.opencontainers.image.source="https://github.com/yasabh/toolshed-" \
       org.opencontainers.image.licenses="AGPL-3.0"
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+ENV NODE_ENV=production \
     TZ=Europe/Budapest
-
-# No Ghostscript, and no apt layer at all. It runs in the browser as WebAssembly
-# now (app/static/vendor/), so the one large C parser that used to read files
-# strangers chose is not installed on this box.
-
-# Before the app is copied, not after: this never changes, and behind a COPY it
-# would re-run on every code edit.
-RUN useradd --system --uid 10001 --no-create-home toolshed
 
 WORKDIR /srv
 
-# Dependencies ahead of the app, so editing a template does not reinstall them.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 # The vendored Ghostscript-WASM is 16 MB and changes only when test/vendor.sh is
-# re-run. On its own layer, ahead of the code, so a one-line template edit
-# rewrites half a megabyte instead of sixteen.
-COPY app/static/vendor/ ./app/static/vendor/
+# re-run. On its own layer, ahead of everything that changes often, so a one-line
+# template edit rewrites kilobytes instead of sixteen megabytes.
+COPY public/vendor/ ./public/vendor/
 
-# The app itself, listed rather than copied as one directory — a bare
-# `COPY app ./app` here would pull the 16 MB above into this layer as well and
-# undo the split. A new subdirectory needs a line of its own; test/prefix.sh
-# fails loudly if one is missed, because it fetches every URL the page emits.
-COPY app/*.py ./app/
-COPY app/tools/ ./app/tools/
-COPY app/templates/ ./app/templates/
-COPY app/static/*.js app/static/*.css ./app/static/
+# The app, listed rather than copied as one directory — a bare `COPY . .` here
+# would pull the 16 MB above into this layer as well and undo the split. A new
+# directory needs a line of its own; test/prefix.sh fails loudly if one is
+# missed, because it fetches every URL the page emits.
+COPY package.json server.js ./
+COPY lib/ ./lib/
+COPY templates/ ./templates/
+COPY public/*.js public/*.css ./public/
 
-# Everything above is owned by root and stays that way: this process only ever
-# reads its own code, and one that cannot overwrite it is one fewer way for a
-# bug to become something permanent.
-USER toolshed
+# `node` ships with the image and owns nothing here: everything above stays
+# root-owned, so the process can read its own code but never overwrite it.
+USER node
 
 EXPOSE 8080
 
-# --proxy-headers is off on purpose. The one forwarded header this app reads is
-# X-Forwarded-Prefix, which it reads itself (app/prefix.py); letting uvicorn
-# rewrite root_path from the others reintroduces exactly the ambiguity that
-# module exists to avoid.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||8080)+'/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
+CMD ["node", "server.js"]

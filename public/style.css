@@ -91,6 +91,33 @@ header .spacer { flex:1; }
 .content { padding:6px 20px 32px; }
 .lede { margin:0 0 22px; font-size:14px; line-height:1.55; color:var(--muted); }
 
+/* Form on the left, the queue of picked files on the right. One column until
+   there is room for two — below that the queue simply follows the form, which is
+   the reading order anyway. */
+.panes { display:grid; gap:16px; align-items:start;
+         grid-template-columns:minmax(0,1fr); }
+@media (min-width: 1000px) {
+  .panes { grid-template-columns:minmax(0,1.4fr) minmax(280px,1fr); }
+  /* Sticky so that scrolling a long queue does not carry the Compress button
+     off the screen. */
+  .panes > form { position:sticky; top:16px; }
+}
+.queue { display:flex; flex-direction:column; min-height:0; }
+.queue[hidden] { display:none; }
+.queue-head { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+.queue-head h2 { margin:0; font-size:14px; font-weight:600; }
+.queue-clear { margin-left:auto; padding:4px 10px; border:0; border-radius:8px;
+               cursor:pointer; background:none; color:var(--muted);
+               font:500 12px system-ui,sans-serif; transition:background .15s, color .15s; }
+.queue-clear:hover { background:var(--field-bg); color:var(--fg); }
+/* The list scrolls, not the pane: twenty files must not stretch the page. */
+.queue .picks { flex-direction:column; flex-wrap:nowrap; gap:6px; margin:0;
+                max-height:min(52vh, 460px); overflow-y:auto;
+                /* Room for the scrollbar so it never sits on top of a chip. */
+                padding-right:4px; }
+.queue .pick { max-width:none; }
+.queue .pick-name { flex:1; }
+
 /* ---- Cards and fields ----------------------------------------------------- */
 .card { padding:20px; border:1px solid var(--field-br); border-radius:14px;
         background:color-mix(in srgb, var(--fg) 3%, var(--bg)); }
@@ -199,8 +226,8 @@ header .spacer { flex:1; }
                 margin-bottom:12px; }
 .results-head h2 { margin:0; font-size:16px; font-weight:600; }
 .results-total { font-size:13px; color:var(--muted); }
-.result-list { margin:0; padding:0; list-style:none; display:flex;
-               flex-direction:column; gap:8px; }
+.result-list { margin:0; padding:0; list-style:none; display:grid; gap:8px;
+               grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); }
 
 /* One row per file. The columns are named so the grid reads as the row does:
    name, status, the bar, and the way to get the file. It collapses to two rows

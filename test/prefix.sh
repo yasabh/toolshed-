@@ -43,6 +43,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# safeNext is pure string logic, so it is checked before anything is built —
+# a failure there is a security bug and there is no point proving the rest.
+head2 "=== safeNext ==="
+printf 'FROM node:22-alpine\nWORKDIR /srv\nCOPY . .\nCMD ["node","test/test-next.mjs"]\n' > "$WORK/unit.Dockerfile"
+if tar cf - lib/links.js test/test-next.mjs -C "$WORK" unit.Dockerfile |
+     docker build -q -t toolshed-unit:test -f unit.Dockerfile - >/dev/null &&
+   docker run --rm toolshed-unit:test >/dev/null; then
+  ok "test-next.mjs"
+else
+  bad "test-next.mjs — run it directly to see which case"
+fi
+
 echo "building…"
 docker build -q -t toolshed:prefix-test . >/dev/null
 docker build -q -t toolshed-proxy:prefix-test -f test/proxy.Dockerfile test >/dev/null
@@ -198,8 +210,10 @@ done
 
 
 echo "the container runs as nobody in particular"
-whoami_out=$(docker exec "$APP" id -u | tr -d '\r')
-check "uid"                                "$whoami_out"                      10001
+# The exact uid is the base image's business (node:alpine ships `node` as 1000).
+# What matters, and all that is asserted, is that it is not root.
+uid=$(docker exec "$APP" id -u | tr -d '\r')
+[ "$uid" != "0" ] && ok "runs as uid $uid, not root" || bad "running as root"
 
 echo "nothing reached the gateway root during any of the above"
 leaks=$(docker logs "$PROXY" 2>&1 | grep -c ' 418 ' || true)
