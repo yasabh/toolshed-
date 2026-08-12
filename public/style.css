@@ -91,28 +91,30 @@ header .spacer { flex:1; }
 .content { padding:6px 20px 32px; }
 .lede { margin:0 0 22px; font-size:14px; line-height:1.55; color:var(--muted); }
 
-/* Form on the left, the queue of picked files on the right. One column until
-   there is room for two — below that the queue simply follows the form, which is
-   the reading order anyway. */
-.panes { display:grid; gap:16px; align-items:start;
-         grid-template-columns:minmax(0,1fr); }
-@media (min-width: 1000px) {
-  .panes { grid-template-columns:minmax(0,1.4fr) minmax(280px,1fr); }
-  /* Sticky so that scrolling a long queue does not carry the Compress button
-     off the screen. */
-  .panes > form { position:sticky; top:16px; }
+/* One card, two columns: the controls on the left, the queue of picked files on
+   the right. One column until there is room for two — below that the queue
+   simply follows the controls, which is the reading order anyway. */
+.card-grid { display:grid; gap:20px; align-items:start;
+             grid-template-columns:minmax(0,1fr); }
+.card-main { min-width:0; }
+@media (min-width: 900px) {
+  .card-grid { grid-template-columns:minmax(0,1.35fr) minmax(260px,1fr); gap:24px; }
+  /* A rule rather than a second card: they are one box, and the border is what
+     says the queue belongs to the form beside it. */
+  .card-grid > .queue { border-left:1px solid var(--field-br); padding-left:24px; }
 }
-.queue { display:flex; flex-direction:column; min-height:0; }
+.queue { display:flex; flex-direction:column; min-width:0; }
 .queue[hidden] { display:none; }
 .queue-head { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
-.queue-head h2 { margin:0; font-size:14px; font-weight:600; }
+.queue-head h2 { margin:0; font-size:13px; font-weight:600; }
 .queue-clear { margin-left:auto; padding:4px 10px; border:0; border-radius:8px;
                cursor:pointer; background:none; color:var(--muted);
                font:500 12px system-ui,sans-serif; transition:background .15s, color .15s; }
 .queue-clear:hover { background:var(--field-bg); color:var(--fg); }
-/* The list scrolls, not the pane: twenty files must not stretch the page. */
+/* The list scrolls, not the card: twenty files must not stretch the page, and
+   the Compress button must stay where it was. */
 .queue .picks { flex-direction:column; flex-wrap:nowrap; gap:6px; margin:0;
-                max-height:min(52vh, 460px); overflow-y:auto;
+                max-height:min(46vh, 400px); overflow-y:auto;
                 /* Room for the scrollbar so it never sits on top of a chip. */
                 padding-right:4px; }
 .queue .pick { max-width:none; }

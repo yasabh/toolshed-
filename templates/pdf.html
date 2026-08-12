@@ -11,9 +11,10 @@
 <noscript><p class="err">This tool needs JavaScript — the compression runs in
 your browser, not on the server.</p></noscript>
 
-<div class="panes">
 <form id="shrink" class="card" data-max-bytes="{{max_bytes}}"
       data-max-files="{{max_files}}">
+  <div class="card-grid">
+  <div class="card-main">
 
   <div class="field">
     <!-- Label above the field, not a placeholder — a placeholder disappears
@@ -45,21 +46,22 @@ your browser, not on the server.</p></noscript>
   <button type="submit" class="primary" id="go" disabled>Compress</button>
   <p class="fineprint">Only images are touched. Text and vectors are left
   exactly as they are, so a PDF that is mostly text will barely change size.</p>
-</form>
-
-<!-- The queue, beside the form rather than under it: with twenty files the form
-     would otherwise be pushed off the top of the screen by its own input. The
-     list scrolls inside this pane so the Compress button never moves. Chips live
-     out here and not in the drop box, or the invisible file input covering that
-     box would swallow every click meant for a chip's remove button. -->
-<aside class="card queue" id="queue" hidden>
-  <div class="queue-head">
-    <h2>Selected</h2>
-    <button type="button" class="queue-clear" id="clearPicks">Clear all</button>
   </div>
-  <ul class="picks" id="picks"></ul>
-</aside>
-</div>
+
+  <!-- The queue, beside the controls rather than under them: with twenty files
+       the Compress button would otherwise be pushed off the screen by the list
+       above it. Same box, second column, and the list scrolls inside itself.
+       Chips sit here and not in the drop zone, because the invisible file input
+       covering that zone would swallow every click meant for a chip's ×. -->
+  <aside class="queue" id="queue" hidden>
+    <div class="queue-head">
+      <h2>Selected</h2>
+      <button type="button" class="queue-clear" id="clearPicks">Clear all</button>
+    </div>
+    <ul class="picks" id="picks"></ul>
+  </aside>
+  </div>
+</form>
 
 <!-- One row per file, filled in by pdf.js as each one finishes. -->
 <section class="results" id="results" hidden aria-live="polite">
