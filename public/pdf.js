@@ -26,6 +26,7 @@ const selectAll = document.getElementById("selectAll");
 const resultsCount = document.getElementById("resultsCount");
 const downloadSelected = document.getElementById("downloadSelected");
 const emailSelected = document.getElementById("emailSelected");
+const notDownloaded = document.getElementById("notDownloaded");
 const choices = document.getElementById("choices");
 const maxBytes = Number(form.dataset.maxBytes);
 const maxFiles = Number(form.dataset.maxFiles);
@@ -37,25 +38,38 @@ let finished = [];
 
 /* ---- The worker pool -----------------------------------------------------
    One worker is one core, which on an eight-core machine is twelve percent of
-   the CPU while the user waits. The pool runs several files at once instead.
+   the CPU while the user waits. The pool runs several files at once instead,
+   sized to the machine it is actually running on.
 
-   Capped rather than uncapped: a machine that hands its whole CPU to a
-   background tab is a machine that feels broken, and every worker also holds its
-   own Ghostscript instance, so memory bounds this as much as cores do. 80%
-   leaves a core or two for the browser to keep painting and for whatever else
-   the user is in the middle of. */
+   Two ceilings, and the lower one wins. Cores decide how much work can happen at
+   once; **memory decides how much may be resident**, because every worker holds
+   its own Ghostscript instance and a PDF, and that is what kills a tab. A phone
+   with eight cores and 4 GB is bounded by the second, not the first. */
 const CORES = navigator.hardwareConcurrency || 4;
 const CPU_SHARE = 0.8;
 
+// What one worker costs while it runs: a Ghostscript instance plus the file in
+// and the file out. A ceiling rather than a measurement — an instance grows to
+// fit the PDF it was given, and this has to hold for the worst one in a batch.
+const WORKER_MB = 512;
+// How much of the machine's memory this page may plan around. The rest belongs
+// to the browser itself and to everything else the user has open.
+const MEMORY_SHARE = 0.4;
+
 function poolSize(fileCount) {
-  let limit = Math.max(1, Math.floor(CORES * CPU_SHARE));
-  // deviceMemory is in GB and is coarse (and absent on Firefox and Safari).
-  // Where it is present and small, cores are not the binding constraint.
-  const gb = navigator.deviceMemory;
-  if (gb && gb <= 4) limit = Math.min(limit, 2);
-  // Never more workers than there is work — spawning a fourth for a third file
-  // only pays the startup cost.
-  return Math.max(1, Math.min(limit, fileCount));
+  const byCpu = Math.floor(CORES * CPU_SHARE);
+
+  // deviceMemory is coarse (0.25 / 0.5 / 1 / 2 / 4 / 8) and browsers clamp it at
+  // 8 whatever the machine really has, to make it useless for fingerprinting —
+  // so a 64 GB workstation and a 16 GB laptop both say 8, and this stays
+  // conservative on both. Absent on Firefox and Safari, where assuming a modest
+  // laptop is the safe reading.
+  const gb = navigator.deviceMemory || 4;
+  const byMemory = Math.floor((gb * 1024 * MEMORY_SHARE) / WORKER_MB);
+
+  // Never more workers than there is work: a fourth worker for a third file only
+  // pays the startup cost.
+  return Math.max(1, Math.min(byCpu, byMemory, fileCount));
 }
 
 // The compiled module, fetched and compiled once for the life of the page and
@@ -270,6 +284,8 @@ form.addEventListener("submit", async (e) => {
   }
 
   go.disabled = true;
+  compressing = true;
+  syncUnloadWarning();
   // Read once, up front: changing the picker halfway through a batch must not
   // give half the files one quality and half another.
   const preset = chosenPreset();
@@ -297,10 +313,42 @@ form.addEventListener("submit", async (e) => {
     progress();
   });
 
+  compressing = false;
   go.disabled = false;
   go.textContent = "Compress";
   summarise(files.length - failed, failed, before, after);
 });
+
+/* ---- Losing work ----------------------------------------------------------
+   Results live in this page and nowhere else — that is the whole design — so
+   closing the tab throws them away. The browser will ask first, but only about
+   work that is actually at risk.
+
+   The listener is added and removed rather than left in place: a page that
+   always asks is a page people learn to click through, and browsers ignore the
+   prompt anyway unless the user has interacted with the page. */
+let compressing = false;
+
+const unsaved = () => finished.filter((item) => !item.saved).length;
+
+function warnBeforeUnload(event) {
+  // preventDefault is the modern spelling; returnValue is what older browsers
+  // still read. Neither lets us choose the wording — that text is the browser's.
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+function syncUnloadWarning() {
+  const atRisk = compressing || unsaved() > 0;
+  window.removeEventListener("beforeunload", warnBeforeUnload);
+  if (atRisk) window.addEventListener("beforeunload", warnBeforeUnload);
+}
+
+/** Marks results the user has actually taken a copy of. */
+function markSaved(items) {
+  for (const item of items) item.saved = true;
+  syncSelection();
+}
 
 /* ---- Selection ------------------------------------------------------------
    Everything that finishes starts ticked: the common case is "all of them", and
@@ -329,6 +377,11 @@ function syncSelection() {
     ? `${picked.length} of ${finished.length} selected` +
       (picked.length ? ` · ${humanBytes(bytes)}` : "")
     : "";
+
+  // Only what has not been taken a copy of is worth warning about.
+  const left = unsaved();
+  notDownloaded.textContent = left ? `${left} not downloaded yet` : "";
+  syncUnloadWarning();
 
   for (const button of [downloadSelected, emailSelected]) {
     button.disabled = picked.length === 0;
@@ -361,6 +414,7 @@ downloadSelected.addEventListener("click", () => {
   link.href = url;
   link.download = picked.length === 1 ? picked[0].name : "compressed-pdfs.zip";
   link.click();
+  markSaved(picked);
   // Revoked on the next frame, not immediately: the click has to be dispatched
   // before the URL stops resolving.
   requestAnimationFrame(() => URL.revokeObjectURL(url));
@@ -378,6 +432,8 @@ emailSelected.addEventListener("click", async () => {
   }
   try {
     await navigator.share({ files, title: "Compressed PDFs" });
+    // Only after it resolves: a share sheet the user closed took no copy.
+    markSaved(picked);
   } catch (err) {
     // A user closing the share sheet is not a failure worth a toast.
     if (err?.name !== "AbortError") notice("Could not open the share sheet.", "error");
@@ -419,7 +475,7 @@ function resolveRow(row, file, out, images, preset) {
   checkbox.checked = true;
   checkbox.addEventListener("change", syncSelection);
   row.classList.remove("pending");
-  finished.push({ name, bytes: out, row });
+  finished.push({ name, bytes: out, row, saved: false });
 
   const link = row.querySelector(".row-get");
   link.href = url;
@@ -427,6 +483,10 @@ function resolveRow(row, file, out, images, preset) {
   // not land in the downloads folder as "file (1).pdf".
   link.download = name;
   link.hidden = false;
+  link.addEventListener("click", () => {
+    const item = finished.find((f) => f.row === row);
+    if (item) markSaved([item]);
+  });
 
   row.classList.add("done");
 

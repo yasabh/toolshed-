@@ -229,17 +229,46 @@ The honest costs: it needs JavaScript, a browser new enough for module workers,
 and that first 15.4 MB. A very large PDF can also exhaust a phone tab where the
 Pi would have coped — but that is the user's own tab, not everyone's gateway.
 
-Files run in parallel across a small worker pool, sized at **80% of
-`navigator.hardwareConcurrency`** (and at most 2 where `deviceMemory` reports
-4 GB or less). One worker is one core, so a single one leaves an eight-core
-machine idling at 12% while the user waits.
+Files run in parallel across a worker pool sized to the machine it is running
+on. **Two ceilings, and the lower one wins:**
 
-Capped rather than uncapped, for two reasons: every worker holds its own
-Ghostscript instance, so memory bounds the pool as much as cores do; and a
-background tab that takes the whole CPU is a machine that feels broken. Work is
-handed out on demand rather than dealt evenly up front — PDFs differ wildly in
-how long they take, and a worker that drew three quick ones should pick up a
-fourth rather than idle beside one still grinding.
+| | |
+| --- | --- |
+| CPU | `floor(hardwareConcurrency × 0.8)` |
+| Memory | `floor(deviceMemory × 0.4 ÷ 512 MB)` |
+| Work | never more workers than files |
+
+Cores decide how much can happen at once; **memory decides how much may be
+resident**, because every worker holds its own Ghostscript instance plus a PDF in
+and a PDF out, and that is what actually kills a tab. A phone with eight cores
+and 4 GB is bounded by the second, not the first. Note that browsers clamp
+`deviceMemory` at 8 to make it useless for fingerprinting, so a 64 GB
+workstation and a 16 GB laptop both report the same — which keeps this
+conservative on both, and it is absent entirely on Firefox and Safari.
+
+| machine | workers |
+| --- | --- |
+| 2 cores / 2 GB | 1 |
+| 4 cores / 4 GB | 3 |
+| 8 cores / 4 GB (phone) | 3 |
+| 8 cores / 8 GB | 6 |
+| 16 cores, clamped to 8 GB | 6 |
+
+Capped rather than uncapped for a second reason too: a background tab that takes
+the whole CPU is a machine that feels broken. Work is handed out on demand rather
+than dealt evenly up front — PDFs differ wildly in how long they take, and a
+worker that drew three quick ones should pick up a fourth rather than idle beside
+one still grinding.
+
+### Closing the tab
+
+Results live in this page and nowhere else — that is the design, not a
+limitation — so closing the tab throws them away. The `beforeunload` listener is
+**added and removed** rather than left in place: it is registered only while a
+batch is running or a result has not been downloaded, because a page that always
+asks is one people learn to click straight past. Taking a copy — a row's
+Download, the zip, or a share sheet that actually resolved — clears the file that
+was taken, and the bar says how many are still at risk.
 
 The 15.4 MB module is compiled **once** on the main thread and the resulting
 `WebAssembly.Module` is posted to every worker. Compiling it per worker is the

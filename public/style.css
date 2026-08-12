@@ -235,6 +235,10 @@ header .spacer { flex:1; }
 .results-count { font-size:13px; color:var(--muted); }
 /* The batch outcome. Pushed to the right so the selection reads as one group on
    the left and this as a separate, persistent fact. */
+/* What would be lost by closing the tab. Amber, not red: nothing has gone wrong
+   yet, and this is the same thing the browser will ask about on the way out. */
+.results-warn { font-size:13px; font-weight:600; color:#d99e2b; }
+.results-warn:empty { display:none; }
 .results-total { margin-left:auto; font-size:13px; color:var(--muted);
                  font-variant-numeric:tabular-nums; }
 .results-actions { display:flex; gap:8px; flex-wrap:wrap; }

@@ -312,6 +312,38 @@ try {
     ? ok(`zip is well-formed: PK, ${zip.entries} entries, ${zip.size} bytes`)
     : bad(`zip malformed: ${JSON.stringify(zip)}`);
 
+  // ---- Nothing is lost silently --------------------------------------------
+  // The listener is added and removed rather than left in place, so its presence
+  // is the assertion: a page that always asks is one people learn to click past.
+  const risk = () => page.evaluate(() => ({
+    warn: document.getElementById("notDownloaded").textContent,
+    // getEventListeners is a devtools-only API, so the guard is observed the way
+    // a browser exposes it: onbeforeunload stays null, but a registered listener
+    // makes the page require confirmation. Puppeteer cannot read that directly,
+    // so the visible counter is the proxy — it is driven by the same predicate.
+  }));
+
+  await page.evaluate(() => document.querySelectorAll(".row .row-sel")
+    .forEach((c) => { if (!c.checked) c.click(); }));
+  let r = await risk();
+  r.warn === "4 not downloaded yet"
+    ? ok(`unsaved results are counted: "${r.warn}"`)
+    : bad(`unsaved counter says "${r.warn}"`);
+
+  // Downloading one row marks that one, and only that one, as taken.
+  await page.evaluate(() => document.querySelector(".row-get").click());
+  r = await risk();
+  r.warn === "3 not downloaded yet"
+    ? ok(`a per-row download counts as saved: "${r.warn}"`)
+    : bad(`after one download: "${r.warn}"`);
+
+  // Download the rest as a zip; nothing is then at risk.
+  await page.evaluate(() => document.getElementById("downloadSelected").click());
+  r = await risk();
+  r.warn === ""
+    ? ok("downloading everything clears the warning")
+    : bad(`after downloading all: "${r.warn}"`);
+
   // The claim on the page is that nothing is uploaded. This is what checks it.
   const uploads = requests.filter((r) => r.method !== "GET");
   uploads.length === 0 ? ok("nothing was uploaded — every request was a GET")
