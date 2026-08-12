@@ -39,13 +39,13 @@ let finished = [];
    One worker is one core, which on an eight-core machine is twelve percent of
    the CPU while the user waits. The pool runs several files at once instead.
 
-   It is capped, not maximised. Every worker holds its own Ghostscript instance,
-   so the ceiling is set by memory as much as by cores, and a machine that gives
-   its whole CPU to a background tab is a machine that feels broken. 70% of the
-   cores leaves enough for the browser to stay responsive and for whatever else
-   the user is doing. */
+   Capped rather than uncapped: a machine that hands its whole CPU to a
+   background tab is a machine that feels broken, and every worker also holds its
+   own Ghostscript instance, so memory bounds this as much as cores do. 80%
+   leaves a core or two for the browser to keep painting and for whatever else
+   the user is in the middle of. */
 const CORES = navigator.hardwareConcurrency || 4;
-const CPU_SHARE = 0.7;
+const CPU_SHARE = 0.8;
 
 function poolSize(fileCount) {
   let limit = Math.max(1, Math.floor(CORES * CPU_SHARE));

@@ -135,7 +135,7 @@ try {
   clearInterval(watch);
 
   const cores = await page.evaluate(() => navigator.hardwareConcurrency || 4);
-  const expected = Math.max(1, Math.min(Math.floor(cores * 0.7), 4));
+  const expected = Math.max(1, Math.floor(cores * 0.8));
   peakWorkers > 1 || cores < 3
     ? ok(`ran ${peakWorkers} workers in parallel on ${cores} cores`)
     : bad(`only ${peakWorkers} worker on ${cores} cores (expected ~${expected})`);

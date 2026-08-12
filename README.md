@@ -229,12 +229,12 @@ The honest costs: it needs JavaScript, a browser new enough for module workers,
 and that first 15.4 MB. A very large PDF can also exhaust a phone tab where the
 Pi would have coped — but that is the user's own tab, not everyone's gateway.
 
-Files run in parallel across a small worker pool, sized at **70% of
+Files run in parallel across a small worker pool, sized at **80% of
 `navigator.hardwareConcurrency`** (and at most 2 where `deviceMemory` reports
 4 GB or less). One worker is one core, so a single one leaves an eight-core
 machine idling at 12% while the user waits.
 
-Capped rather than maximised, for two reasons: every worker holds its own
+Capped rather than uncapped, for two reasons: every worker holds its own
 Ghostscript instance, so memory bounds the pool as much as cores do; and a
 background tab that takes the whole CPU is a machine that feels broken. Work is
 handed out on demand rather than dealt evenly up front — PDFs differ wildly in
