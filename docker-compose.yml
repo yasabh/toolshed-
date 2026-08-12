@@ -3,6 +3,9 @@ name: toolshed
 services:
   toolshed:
     build: .
+    # Named explicitly, or compose derives "toolshed-toolshed" from the project
+    # and service names — the same word twice, and not what the gateway calls it.
+    image: toolshed:latest
     networks: [edge]          # gateway reaches us here; no `ports:` — ever
     restart: unless-stopped
     environment:
