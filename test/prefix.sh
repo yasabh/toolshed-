@@ -148,8 +148,14 @@ echo "the browser gets what it needs to compress locally"
 check "  GET $P/static/gs-worker.js"       "$(code "$BASE$P/static/gs-worker.js")" 200
 check "  GET $P/static/vendor/gs.mjs"      "$(code "$BASE$P/static/vendor/gs.mjs")" 200
 check "  GET $P/static/vendor/gs.wasm"     "$(code "$BASE$P/static/vendor/gs.wasm")" 200
-# AGPL: the build is served to browsers, so its licence has to be reachable.
+# AGPL: the build is served to browsers, so its licence has to be reachable —
+# and readable. Without an explicit type it falls to application/octet-stream,
+# and the one link whose job is to show the licence downloads it instead.
 check "  GET $P/static/vendor/LICENSE"     "$(code "$BASE$P/static/vendor/LICENSE")" 200
+sh_c "curl -s -D /tmp/lic.txt -o /dev/null '$BASE$P/static/vendor/LICENSE'"
+sh_c 'grep -qi "^content-type: text/plain" /tmp/lic.txt' \
+  && ok "  …and is served as text, not a download" \
+  || bad "  licence type: $(sh_c "grep -i content-type /tmp/lic.txt")"
 
 done
 # ---------------------------------------------------------------------------

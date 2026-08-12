@@ -161,13 +161,33 @@ try {
 
   await page.click("#go");
 
+  // With a pool, several files are being worked on at once — those rows must say
+  // so rather than all reading "Queued" while the machine is at full tilt.
+  await page.waitForSelector(".row.working", { timeout: 180000 });
+  const working = await page.evaluate(() => ({
+    n: document.querySelectorAll(".row.working").length,
+    status: document.querySelector(".row.working .row-status")?.textContent,
+  }));
+  working.status === "Compressing…"
+    ? ok(`${working.n} row(s) report Compressing while the rest queue`)
+    : bad(`working row says "${working.status}"`);
+
   // 15.4 MB of wasm has to arrive and compile before anything happens, so this
   // is generous on purpose.
   await page.waitForSelector(".row.done, .row.failed", { timeout: 180000 });
   await page.waitForFunction(
-    () => document.getElementById("go").textContent === "Compress",
+    () => !document.getElementById("go").textContent.startsWith("Compressing"),
     { timeout: 180000 });
   clearInterval(watch);
+
+  // Nothing left to do at this quality, so the button goes flat and says so.
+  const idle = await page.evaluate(() => ({
+    text: document.getElementById("go").textContent,
+    disabled: document.getElementById("go").disabled,
+  }));
+  idle.text === "Compressed" && idle.disabled
+    ? ok('the button settles on a disabled "Compressed"')
+    : bad(`button after the run: ${JSON.stringify(idle)}`);
 
   const cores = await page.evaluate(() => navigator.hardwareConcurrency || 4);
   const expected = Math.max(1, Math.floor(cores * 0.8));
@@ -224,6 +244,15 @@ try {
     return radio.checked;
   });
   switched ? ok("switched to Print (Brochure)") : bad("the Print radio did not take");
+  // Different quality, different output — so the cache must not claim these are
+  // already done, and the button has to offer the work again.
+  const afterSwitch = await page.evaluate(() => ({
+    text: document.getElementById("go").textContent,
+    disabled: document.getElementById("go").disabled,
+  }));
+  !afterSwitch.disabled && afterSwitch.text === "Compress 4"
+    ? ok(`changing quality re-arms the button ("${afterSwitch.text}")`)
+    : bad(`after switching quality: ${JSON.stringify(afterSwitch)}`);
 
   // Mark the current rows first. Waiting on #go alone is not enough: it already
   // reads "Compress" at the moment of clicking, so the wait returns instantly and
@@ -235,7 +264,7 @@ try {
   await page.waitForFunction(
     () => document.querySelectorAll(".row.stale").length === 0, { timeout: 60000 });
   await page.waitForFunction(
-    () => document.getElementById("go").textContent === "Compress" &&
+    () => !document.getElementById("go").textContent.startsWith("Compressing") &&
           document.querySelectorAll(".row.done, .row.failed").length === 4,
     { timeout: 180000 });
   const printFailed = await page.$(".row.failed");
@@ -314,15 +343,20 @@ try {
                    : bad(`with ${state.count}: ${JSON.stringify(state)}`);
   }
 
-  // Email is feature-detected. Headless Chromium has no share sheet, so the
+  // Sharing is feature-detected. Headless Chromium has no share sheet, so the
   // button must be absent — shown-and-failing is the outcome being avoided.
-  const email = await page.evaluate(() => ({
-    hidden: document.getElementById("emailSelected").hidden,
+  const share = await page.evaluate(() => ({
+    hidden: document.getElementById("shareSelected").hidden,
+    label: document.getElementById("shareSelected").querySelector("span").textContent,
     canShare: typeof navigator.canShare === "function",
   }));
-  email.hidden || email.canShare
-    ? ok(`Email button hidden where sharing is unavailable (hidden=${email.hidden})`)
-    : bad("Email button shown without share support");
+  share.hidden || share.canShare
+    ? ok(`Share button hidden where sharing is unavailable (hidden=${share.hidden})`)
+    : bad("Share button shown without share support");
+  // Named for what it opens — a chooser — not for one of the things in it.
+  /^Share( \d+)? to…$/.test(share.label)
+    ? ok(`share button reads "${share.label}"`)
+    : bad(`share button reads "${share.label}"`);
 
   // The zip is written by hand, so its bytes are worth checking rather than
   // assuming: PK signature, and the central directory claims the right count.

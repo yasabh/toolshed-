@@ -25,7 +25,7 @@ const rowTemplate = document.getElementById("rowTemplate");
 const selectAll = document.getElementById("selectAll");
 const resultsCount = document.getElementById("resultsCount");
 const downloadSelected = document.getElementById("downloadSelected");
-const emailSelected = document.getElementById("emailSelected");
+const shareSelected = document.getElementById("shareSelected");
 const notDownloaded = document.getElementById("notDownloaded");
 const choices = document.getElementById("choices");
 const maxBytes = Number(form.dataset.maxBytes);
@@ -35,6 +35,10 @@ let objectUrls = [];
 // Every finished file, in row order: { name, bytes, row }. The row keeps the
 // checkbox, so this is the only place that has to know what "selected" means.
 let finished = [];
+// Declared here, with the rest of the state, rather than beside the code that
+// uses it: renderPicks() runs while this module is still evaluating, and a `let`
+// read before its declaration throws rather than reading undefined.
+let compressing = false;
 
 /* ---- The worker pool -----------------------------------------------------
    One worker is one core, which on an eight-core machine is twelve percent of
@@ -149,13 +153,18 @@ function spawn(module) {
 }
 
 /**
- * Run every file through a pool, calling `onDone` as each finishes.
+ * Run every file through a pool, calling `onStart` as each is picked up and
+ * `onDone` as each finishes.
+ *
+ * `onStart` is not decoration: with three workers, three files are being worked
+ * on at once, and without it every row reads "Queued" until it flips straight to
+ * a result. The queue would look stuck while the machine was at full tilt.
  *
  * Files are handed out on demand rather than dealt evenly up front: PDFs differ
  * wildly in how long they take, and a worker that drew three quick ones should
  * pick up a fourth rather than idle beside one still grinding.
  */
-async function runPool(files, preset, onDone) {
+async function runPool(files, preset, onStart, onDone) {
   const module = await getModule();
   const workers = Array.from({ length: poolSize(files.length) },
                              () => spawn(module));
@@ -166,6 +175,7 @@ async function runPool(files, preset, onDone) {
         const index = next++;
         if (index >= files.length) return;
         const file = files[index];
+        onStart(index);
         try {
           const bytes = new Uint8Array(await file.arrayBuffer());
           if (bytes[0] !== 0x25 || bytes[1] !== 0x50) { // "%P"
@@ -204,10 +214,51 @@ function drawChoices() {
   }
 }
 drawChoices();
+choices.addEventListener("change", syncCompressButton);
 
 function chosenPreset() {
   const picked = choices.querySelector("input[name=quality]:checked");
   return presetById(picked ? picked.value : DEFAULT_PRESET);
+}
+
+/* ---- What has already been compressed -------------------------------------
+   Keyed on the file's **content hash and the preset**, not the file alone. The
+   same PDF at Email and at Print are different outputs, so switching the picker
+   has to mean real work again — reusing an Email result for a Print request
+   would hand back the wrong file with no way to tell.
+
+   Content, not name+size+date: a file edited and saved between two runs keeps
+   its name and often its size, and reusing the old result there would be worse
+   than the recompression it saved. */
+const hashes = new Map();   // File -> hex digest
+const done = new Map();     // `${digest}:${presetId}` -> { name, bytes, images }
+
+const resultKey = (file, preset) => `${hashes.get(file)}:${preset.id}`;
+
+async function hashOf(bytes) {
+  // SubtleCrypto only exists in a secure context. Behind gatekeeper this is
+  // always HTTPS, but on plain HTTP — which is how the test harness reaches the
+  // app — it is simply absent, and a feature that silently stops working
+  // outside production is a feature that is never really tested.
+  if (globalThis.crypto?.subtle) {
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // FNV-1a, 32 bits at a time into two lanes. Not a cryptographic hash and not
+  // pretending to be: this only decides whether to skip work the user can redo
+  // by removing the file, and nothing trusts it.
+  let a = 0x811c9dc5, b = 0x01000193;
+  for (let i = 0; i < bytes.length; i++) {
+    a = Math.imul(a ^ bytes[i], 0x01000193) >>> 0;
+    b = Math.imul(b + bytes[i], 0x85ebca6b) >>> 0;
+  }
+  return `${a.toString(16)}${b.toString(16)}-${bytes.length.toString(16)}`;
+}
+
+/** Files still needing work for the preset currently chosen. */
+function workLeft() {
+  const preset = chosenPreset();
+  return picked.filter((file) => !done.has(resultKey(file, preset)));
 }
 
 /* ---- The picked files -----------------------------------------------------
@@ -248,7 +299,33 @@ function renderPicks() {
     });
     picks.append(chip);
   }
-  go.disabled = picked.length === 0;
+  syncCompressButton();
+}
+
+/**
+ * The Compress button says what there is to do.
+ *
+ * Nothing picked, or everything already done at this quality, and it goes flat:
+ * a button that runs a minute of work to produce byte-identical files is a trap,
+ * not a convenience. Adding a file or changing the quality gives it something to
+ * do again, and it says so.
+ */
+function syncCompressButton() {
+  if (compressing) return; // the running batch owns the label
+  const left = workLeft().length;
+  go.disabled = left === 0;
+  go.textContent = picked.length === 0 ? "Compress"
+    : left === 0 ? "Compressed"
+    : left === picked.length ? `Compress ${left}`
+    : `Compress ${left} new`;
+}
+
+async function noteHashes(files) {
+  await Promise.all(files.map(async (file) => {
+    if (hashes.has(file)) return;
+    hashes.set(file, await hashOf(new Uint8Array(await file.arrayBuffer())));
+  }));
+  renderPicks();
 }
 
 function addFiles(files) {
@@ -263,6 +340,9 @@ function addFiles(files) {
   }
   syncInput();
   renderPicks();
+  // Hashing reads the whole file, so the list is drawn first and the button
+  // settles a moment later rather than the page waiting on disk.
+  noteHashes(picked);
 }
 
 // The picker replaces the selection and a drop adds to it — which is how both
@@ -271,6 +351,7 @@ input.addEventListener("change", () => {
   picked = [...input.files];
   if (picked.length) prefetchEngine();
   renderPicks();
+  noteHashes(picked);
 });
 picked = [...input.files]; // a back/forward navigation can restore a selection
 renderPicks();
@@ -351,24 +432,49 @@ form.addEventListener("submit", async (e) => {
   };
   progress();
 
-  await runPool(files, preset, (index, result, err) => {
+  // Anything already compressed at this quality is placed straight away. The
+  // work was done once; doing it again would produce the same bytes and cost the
+  // same minute.
+  const todo = [];
+  for (const [index, file] of files.entries()) {
+    const cached = done.get(resultKey(file, preset));
+    if (cached) {
+      before += file.size;
+      after += cached.bytes.length;
+      placeRow(list.children[index], file, cached.bytes, cached.images, preset, true);
+      finished++;
+    } else {
+      todo.push({ file, index });
+    }
+  }
+  progress();
+
+  await runPool(todo.map((t) => t.file), preset, (i) => {
+    const row = list.children[todo[i].index];
+    row.classList.add("working");
+    row.querySelector(".row-status").textContent = "Compressing…";
+  }, (i, result, err) => {
     finished++;
+    const { file, index } = todo[i];
     const row = list.children[index];
+    row.classList.remove("working");
     if (err) {
       failed++;
       failRow(row, err.message);
     } else {
-      before += files[index].size;
+      before += file.size;
       after += result.out.length;
-      resolveRow(row, files[index], result.out, result.images, preset);
+      const item = placeRow(row, file, result.out, result.images, preset, false);
+      done.set(resultKey(file, preset), item);
     }
     progress();
   });
 
   compressing = false;
-  go.disabled = false;
-  go.textContent = "Compress";
   summarise(files.length - failed, failed, before, after);
+  // Last, so it reads the results this run just added: with nothing left to do
+  // it settles on "Compressed" and goes flat.
+  syncCompressButton();
 });
 
 /* ---- Losing work ----------------------------------------------------------
@@ -379,8 +485,6 @@ form.addEventListener("submit", async (e) => {
    The listener is added and removed rather than left in place: a page that
    always asks is a page people learn to click through, and browsers ignore the
    prompt anyway unless the user has interacted with the page. */
-let compressing = false;
-
 const unsaved = () => finished.filter((item) => !item.saved).length;
 
 function warnBeforeUnload(event) {
@@ -435,14 +539,15 @@ function syncSelection() {
   notDownloaded.textContent = left ? `${left} not downloaded yet` : "";
   syncUnloadWarning();
 
-  for (const button of [downloadSelected, emailSelected]) {
-    button.disabled = picked.length === 0;
-    // The count goes in the label so the action names its own scope.
-    button.querySelector("span").textContent =
-      `${button === emailSelected ? "Email" : "Download"}` +
-      (picked.length ? ` ${picked.length}` : "") +
-      (button === downloadSelected && picked.length > 1 ? " (zip)" : "");
-  }
+  // The count goes in the label so an action names its own scope and cannot be
+  // read as "all". "Share to…" keeps its ellipsis: it opens a chooser rather
+  // than doing the thing.
+  const count = picked.length ? ` ${picked.length}` : "";
+  downloadSelected.disabled = picked.length === 0;
+  downloadSelected.querySelector("span").textContent =
+    `Download${count}${picked.length > 1 ? " (zip)" : ""}`;
+  shareSelected.disabled = picked.length === 0;
+  shareSelected.querySelector("span").textContent = `Share${count} to…`;
 }
 
 selectAll.addEventListener("change", () => {
@@ -472,14 +577,14 @@ downloadSelected.addEventListener("click", () => {
   requestAnimationFrame(() => URL.revokeObjectURL(url));
 });
 
-emailSelected.addEventListener("click", async () => {
+shareSelected.addEventListener("click", async () => {
   const picked = selected();
   if (!picked.length) return;
   const files = picked.map(asFile);
   // Re-checked with the real files: canShare can refuse a specific set (too
   // large, wrong type) even when it accepted the capability probe.
   if (!navigator.canShare?.({ files })) {
-    notice("This browser will not attach files to an email. Download instead.", "error");
+    notice("This device will not share these files. Download them instead.", "error");
     return;
   }
   try {
@@ -492,12 +597,13 @@ emailSelected.addEventListener("click", async () => {
   }
 });
 
-// mailto: cannot carry an attachment — there is no parameter for it, in any
-// browser — so there is nothing to fall back to. Where the OS share sheet is
-// missing the button is not shown at all, rather than shown and then failing.
-// Probed with a real File because Firefox implements canShare but refuses files.
+// The share sheet is the only way to hand a file to another app without
+// uploading it: mailto: cannot carry an attachment, in any browser, so there is
+// nothing to fall back to. Where the sheet is missing the button is not shown at
+// all, rather than shown and then failing. Probed with a real File because
+// Firefox implements canShare but refuses files to it.
 if (navigator.canShare?.({ files: [new File([new Uint8Array(1)], "a.pdf", { type: "application/pdf" })] })) {
-  emailSelected.hidden = false;
+  shareSelected.hidden = false;
 }
 
 /* ---- The rows ------------------------------------------------------------- */
@@ -517,7 +623,14 @@ function reset(files) {
   syncSelection();
 }
 
-function resolveRow(row, file, out, images, preset) {
+/**
+ * Fill in a finished row, whether the bytes were just produced or came from a
+ * previous run at the same quality.
+ *
+ * Returns what the cache stores, so a reused result and a fresh one are the same
+ * shape and the row cannot tell them apart except where it says so.
+ */
+function placeRow(row, file, out, images, preset, reused) {
   const url = URL.createObjectURL(new Blob([out], { type: "application/pdf" }));
   objectUrls.push(url);
 
@@ -554,7 +667,11 @@ function resolveRow(row, file, out, images, preset) {
   // reported by Ghostscript and is not claimed here.
   const detail = row.querySelector(".row-detail");
   detail.textContent =
-    `${describeImages(images)} · ${preset.name} · text and vectors intact ✓`;
+    `${describeImages(images)} · ${preset.name} · text and vectors intact ✓` +
+    // Said plainly rather than hidden: a row that appears instantly while its
+    // neighbours grind looks like a bug unless it explains itself.
+    (reused ? " · already compressed" : "");
+  return { name, bytes: out, images };
 }
 
 /** "12 images · 9 resized, 3 left as they were" — or less, when there is less

@@ -81,12 +81,15 @@ your browser, not on the server.</p></noscript>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
         <span>Download</span>
       </button>
-      <!-- Hidden unless navigator.canShare({files}) says the browser can carry
-           an attachment. mailto: cannot, in any browser, so there is nothing to
-           fall back to — see emailSelected in pdf.js. -->
-      <button type="button" class="ghost" id="emailSelected" hidden>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m3 8 9 6 9-6"/></svg>
-        <span>Email</span>
+      <!-- "Share", not "Email": this opens the operating system's share sheet,
+           and what is in it is the device's business — mail, WhatsApp, Drive,
+           AirDrop. Naming one of them would promise something we do not control.
+           Hidden unless navigator.canShare({files}) says the browser can carry an
+           attachment at all; see shareSelected in pdf.js. -->
+      <button type="button" class="ghost" id="shareSelected" hidden
+              title="Email, chat, cloud drive — whatever this device offers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
+        <span>Share to…</span>
       </button>
     </div>
   </div>

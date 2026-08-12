@@ -300,17 +300,22 @@ body.dragging .drop { border-color:var(--accent);
    states, so a row cannot show a tick and a spinner at once. */
 .row-mark { grid-area:mark; width:16px; height:16px; margin-top:3px;
             display:grid; place-items:center; box-sizing:border-box; }
-.row:not(.done):not(.failed) .row-mark {
+/* Spinning means a worker has it. A queued row shows a still ring instead —
+   with three workers, three rows spin and the rest wait, which is the truth. */
+.row.working .row-mark {
             border:2px solid color-mix(in srgb, var(--fg) 20%, transparent);
             border-top-color:var(--accent); border-radius:50%;
             animation:rowspin .8s linear infinite; }
+.row.pending:not(.working) .row-mark {
+            border:2px solid color-mix(in srgb, var(--fg) 14%, transparent);
+            border-radius:50%; }
 @keyframes rowspin { to { transform:rotate(1turn); } }
 .row.done .row-mark::after   { content:"\2713"; color:#3ba55d; font:700 13px/1 system-ui,sans-serif; }
 .row.failed .row-mark::after { content:"\2715"; color:#e05555; font:700 12px/1 system-ui,sans-serif; }
 /* A spinner is decoration; someone who asked for less motion should not get a
    thing rotating at them for the length of a 1000-image PDF. */
 @media (prefers-reduced-motion: reduce) {
-  .row:not(.done):not(.failed) .row-mark { animation:none; }
+  .row.working .row-mark { animation:none; }
 }
 .row-get    { grid-area:get; align-self:center; font-size:13px; font-weight:600;
               text-decoration:none; color:var(--accent); white-space:nowrap; }
