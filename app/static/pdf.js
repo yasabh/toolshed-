@@ -2,9 +2,9 @@
 // see gs-worker.js. Nothing is uploaded, which is why the page is allowed to say
 // so.
 //
-// Files are compressed one at a time. A second worker would mean a second 15.4
-// MB Ghostscript instance resident at once, and on a phone that is the
-// difference between slow and killed.
+// Files are compressed in parallel across a small pool of workers, capped at
+// 70% of the machine's cores — see runPool below for why it is capped rather
+// than maximised.
 import { notice, humanBytes } from "./app.js";
 import { PRESETS, DEFAULT_PRESET, presetById } from "./presets.js";
 
@@ -25,43 +25,117 @@ const maxFiles = Number(form.dataset.maxFiles);
 
 let objectUrls = [];
 
-/* ---- The worker -----------------------------------------------------------
-   Started on the first compress, not on page load: it pulls 15.4 MB, and
-   someone who opened the page to read it should not pay for that. */
-let worker = null;
-let nextId = 0;
-const pending = new Map();
+/* ---- The worker pool -----------------------------------------------------
+   One worker is one core, which on an eight-core machine is twelve percent of
+   the CPU while the user waits. The pool runs several files at once instead.
 
-function ensureWorker() {
-  if (worker) return worker;
-  worker = new Worker(new URL("./gs-worker.js", import.meta.url), { type: "module" });
-  worker.addEventListener("message", ({ data }) => {
-    const waiting = pending.get(data.id);
-    if (!waiting) return;
-    pending.delete(data.id);
-    data.ok ? waiting.resolve({ out: new Uint8Array(data.bytes), images: data.images })
-            : waiting.reject(new Error(data.error));
-  });
-  worker.addEventListener("error", (event) => {
-    // A worker that failed to start fails every request queued behind it —
-    // otherwise they hang for ever waiting for a reply that cannot come.
-    const err = new Error(event.message || "Could not start the compressor.");
-    for (const { reject } of pending.values()) reject(err);
-    pending.clear();
-    worker.terminate();
-    worker = null;
-  });
-  return worker;
+   It is capped, not maximised. Every worker holds its own Ghostscript instance,
+   so the ceiling is set by memory as much as by cores, and a machine that gives
+   its whole CPU to a background tab is a machine that feels broken. 70% of the
+   cores leaves enough for the browser to stay responsive and for whatever else
+   the user is doing. */
+const CORES = navigator.hardwareConcurrency || 4;
+const CPU_SHARE = 0.7;
+
+function poolSize(fileCount) {
+  let limit = Math.max(1, Math.floor(CORES * CPU_SHARE));
+  // deviceMemory is in GB and is coarse (and absent on Firefox and Safari).
+  // Where it is present and small, cores are not the binding constraint.
+  const gb = navigator.deviceMemory;
+  if (gb && gb <= 4) limit = Math.min(limit, 2);
+  // Never more workers than there is work — spawning a fourth for a third file
+  // only pays the startup cost.
+  return Math.max(1, Math.min(limit, fileCount));
 }
 
-function compress(bytes, preset) {
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    // The buffer is transferred, so `bytes` is emptied here. Each file is read
-    // fresh from disk, so there is nothing to lose by giving it away.
-    ensureWorker().postMessage({ id, bytes: bytes.buffer, preset }, [bytes.buffer]);
+// The compiled module, fetched and compiled once for the life of the page and
+// handed to every worker after that. Workers themselves are per batch: keeping
+// four Ghostscript instances resident between uploads would cost far more
+// memory than re-spawning costs time.
+let compiledModule = null;
+
+async function getModule() {
+  if (!compiledModule) {
+    const url = new URL("./vendor/gs.wasm", import.meta.url);
+    compiledModule = await WebAssembly.compileStreaming(fetch(url));
+  }
+  return compiledModule;
+}
+
+/** One worker, doing one file at a time. */
+function spawn(module) {
+  const worker = new Worker(new URL("./gs-worker.js", import.meta.url),
+                            { type: "module" });
+  let pending = null;
+  let nextId = 0;
+
+  try {
+    worker.postMessage({ type: "module", module });
+  } catch {
+    // Structured-cloning a WebAssembly.Module is not universal; the worker
+    // compiles its own copy when it never arrives.
+  }
+
+  worker.addEventListener("message", ({ data }) => {
+    if (!pending || data.id !== pending.id) return;
+    const { resolve, reject } = pending;
+    pending = null;
+    data.ok ? resolve({ out: new Uint8Array(data.bytes), images: data.images })
+            : reject(new Error(data.error));
   });
+  worker.addEventListener("error", (event) => {
+    // A worker that dies must fail the job it was holding, or that file waits
+    // for a reply that can never come.
+    if (pending) pending.reject(new Error(event.message || "The compressor stopped."));
+    pending = null;
+  });
+
+  return {
+    run(bytes, preset) {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        pending = { id, resolve, reject };
+        // Transferred, not copied: each file is read fresh from disk, so there
+        // is nothing to lose by giving the buffer away.
+        worker.postMessage({ id, bytes: bytes.buffer, preset }, [bytes.buffer]);
+      });
+    },
+    stop: () => worker.terminate(),
+  };
+}
+
+/**
+ * Run every file through a pool, calling `onDone` as each finishes.
+ *
+ * Files are handed out on demand rather than dealt evenly up front: PDFs differ
+ * wildly in how long they take, and a worker that drew three quick ones should
+ * pick up a fourth rather than idle beside one still grinding.
+ */
+async function runPool(files, preset, onDone) {
+  const module = await getModule();
+  const workers = Array.from({ length: poolSize(files.length) },
+                             () => spawn(module));
+  let next = 0;
+  try {
+    await Promise.all(workers.map(async (worker) => {
+      while (true) {
+        const index = next++;
+        if (index >= files.length) return;
+        const file = files[index];
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          if (bytes[0] !== 0x25 || bytes[1] !== 0x50) { // "%P"
+            throw new Error("That does not look like a PDF.");
+          }
+          onDone(index, await worker.run(bytes, preset.id), null);
+        } catch (err) {
+          onDone(index, null, err);
+        }
+      }
+    }));
+  } finally {
+    for (const worker of workers) worker.stop();
+  }
 }
 
 /* ---- The target-quality picker --------------------------------------------
@@ -183,27 +257,26 @@ form.addEventListener("submit", async (e) => {
   const files = [...picked];
   reset(files);
 
-  let before = 0, after = 0, failed = 0;
-
-  for (const [i, file] of files.entries()) {
-    const row = list.children[i];
-    row.querySelector(".row-status").textContent = "Compressing…";
+  let before = 0, after = 0, failed = 0, finished = 0;
+  const progress = () => {
     go.textContent = files.length > 1
-      ? `Compressing ${i + 1} of ${files.length}…` : "Compressing…";
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      if (bytes[0] !== 0x25 || bytes[1] !== 0x50) { // "%P"
-        throw new Error("That does not look like a PDF.");
-      }
-      const { out, images } = await compress(bytes, preset.id);
-      before += file.size;
-      after += out.length;
-      resolveRow(row, file, out, images, preset);
-    } catch (err) {
+      ? `Compressing… ${finished}/${files.length}` : "Compressing…";
+  };
+  progress();
+
+  await runPool(files, preset, (index, result, err) => {
+    finished++;
+    const row = list.children[index];
+    if (err) {
       failed++;
       failRow(row, err.message);
+    } else {
+      before += files[index].size;
+      after += result.out.length;
+      resolveRow(row, files[index], result.out, result.images, preset);
     }
-  }
+    progress();
+  });
 
   go.disabled = false;
   go.textContent = "Compress";
@@ -219,7 +292,7 @@ function reset(files) {
   for (const file of files) {
     const row = rowTemplate.content.firstElementChild.cloneNode(true);
     row.querySelector(".row-name").textContent = file.name;
-    row.querySelector(".row-status").textContent = "Waiting…";
+    row.querySelector(".row-status").textContent = "Queued…";
     list.append(row);
   }
   results.hidden = false;
@@ -249,9 +322,19 @@ function resolveRow(row, file, out, images, preset) {
   // Ghostscript's own object dump. How many of those were *downsampled* is not
   // reported by Ghostscript and is not claimed here.
   const detail = row.querySelector(".row-detail");
-  detail.textContent = (images
-    ? `${images} image${images > 1 ? "s" : ""} re-encoded`
-    : "No images found") + ` · ${preset.name} · text and vectors intact ✓`;
+  detail.textContent =
+    `${describeImages(images)} · ${preset.name} · text and vectors intact ✓`;
+}
+
+/** "12 images · 9 resized, 3 left as they were" — or less, when there is less
+    to say. The reason an image was left alone is deliberately not claimed: it
+    depends on the image's placement on the page, which is not read here. */
+function describeImages({ total, resized, kept }) {
+  if (!total) return "No images";
+  const plural = total > 1 ? "s" : "";
+  if (!resized) return `${total} image${plural} · none needed resizing`;
+  if (!kept) return `${total} image${plural} · all resized`;
+  return `${total} images · ${resized} resized, ${kept} left as they were`;
 }
 
 function failRow(row, message) {

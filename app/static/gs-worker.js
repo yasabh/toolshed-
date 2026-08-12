@@ -11,6 +11,7 @@
 // Everything here happens on the user's machine. Nothing is uploaded.
 import createModule from "./vendor/gs.mjs";
 import { presetById } from "./presets.js";
+import { findImages, compareImages } from "./pdf-images.js";
 
 // Resolved against this module's own URL, so it works under any gateway prefix
 // without knowing what the prefix is.
@@ -19,60 +20,44 @@ const WASM_URL = new URL("./vendor/gs.wasm", import.meta.url);
 // The arguments every preset shares. The quality choices live in presets.js so
 // that the label a user picks and the flags it runs cannot drift apart.
 //
-// -dPDFDEBUG makes the interpreter dump every object it reads, which is the only
-// way to find out how many images a PDF holds — gs reports nothing about its own
-// image handling otherwise. The lines are filtered as they arrive (see below)
-// rather than collected, so a 1000-image PDF does not accumulate megabytes of
-// dictionary text just to be counted.
-//
 // -dSAFER is absent on purpose: there is no filesystem to protect here, only the
 // in-memory one created for this single run and discarded with it.
+//
+// -dPDFDEBUG used to be here, to count images from Ghostscript's object dump.
+// It is gone: pdf-images.js reads the dictionaries out of the file itself, which
+// costs one pass instead of a JS callback per line of a full object dump.
 const COMMON_ARGS = [
   "-sDEVICE=pdfwrite",
-  "-dPDFDEBUG",
   "-dNOPAUSE",
   "-dQUIET",
   "-dBATCH",
 ];
 
-let compiled = null;
+// A WebAssembly.Module is structured-cloneable, so the pool compiles the 15.4 MB
+// once on the main thread and posts the result to every worker. Compiling it per
+// worker would cost that work N times over and is the obvious way to make a pool
+// slower than no pool at all. Each worker still gets its own *instance*, and so
+// its own linear memory — only the compiled code is shared.
+let shared = null;
 
 function compile() {
-  // compileStreaming needs the response served as application/wasm — it is, and
-  // test/prefix.sh asserts it, because the failure mode otherwise is a silent
-  // fall back to buffering 15 MB before compiling any of it.
-  if (!compiled) {
-    compiled = WebAssembly.compileStreaming(fetch(WASM_URL)).catch((err) => {
-      compiled = null; // a failed fetch must not poison every later attempt
-      throw err;
-    });
-  }
-  return compiled;
+  if (shared) return Promise.resolve(shared);
+  // Fallback for anywhere the Module cannot be posted. compileStreaming needs
+  // the response served as application/wasm — it is, and test/prefix.sh asserts
+  // it, because the failure otherwise is a silent fall back to buffering 15 MB
+  // before compiling any of it.
+  return WebAssembly.compileStreaming(fetch(WASM_URL));
 }
-
-// An image XObject as -dPDFDEBUG prints it. Width and Height are read
-// separately from the /Subtype match because dictionary key order is the
-// producer's choice, not something to rely on.
-const IMAGE_LINE = /\/Subtype\s*\/Image\b/;
-const WIDTH = /\/Width\s+(\d+)/;
-const HEIGHT = /\/Height\s+(\d+)/;
 
 async function compress(bytes, presetId) {
   const module = await compile();
   const log = [];
-  const images = [];
+  // Only the head is worth keeping: if gs fails, what it said first is the
+  // useful part, and an unbounded log on a broken file is its own problem.
+  const onLine = (line) => { if (log.length < 40) log.push(line); };
 
-  const onLine = (line) => {
-    if (IMAGE_LINE.test(line)) {
-      const w = WIDTH.exec(line);
-      const h = HEIGHT.exec(line);
-      if (w && h) images.push({ w: +w[1], h: +h[1] });
-      return; // never kept as text
-    }
-    // Only the tail is worth keeping: if gs fails, the last thing it said is
-    // the useful part, and this stops -dPDFDEBUG filling memory on success.
-    if (log.length < 40) log.push(line);
-  };
+  // Read before the bytes are handed to Ghostscript's in-memory filesystem.
+  const imagesBefore = findImages(bytes);
 
   const gs = await createModule({
     noInitialRun: true,
@@ -114,10 +99,14 @@ async function compress(bytes, presetId) {
     if (log.length) console.warn("ghostscript:", log.join("\n"));
     throw new Error("Ghostscript could not read that PDF.");
   }
-  return { out, images: images.length, preset: preset.id };
+  return { out, images: compareImages(imagesBefore, findImages(out)) };
 }
 
 self.addEventListener("message", async (event) => {
+  if (event.data.type === "module") {
+    shared = event.data.module;
+    return;
+  }
   const { id, bytes, preset } = event.data;
   try {
     const { out, images } = await compress(new Uint8Array(bytes), preset);

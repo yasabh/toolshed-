@@ -119,7 +119,12 @@ app/
   tools/       __init__.py is the registry; pdf.py is ShrinkPDF
   templates/   base.html is the sidebar + header; one file per tool
   static/      style.css, app.js (shell), pdf.js (tool)
-  static/vendor/ ghostscript-wasm-esm, committed; see test/vendor.sh
+  static/presets.js    the target-quality presets — labels, filename
+                       suffixes and gs flags in one place, imported by both
+                       the page and the worker so they cannot drift
+  static/pdf-images.js finds image XObjects by reading the PDF bytes
+  static/gs-worker.js  Ghostscript, off the main thread
+  static/vendor/       ghostscript-wasm-esm, committed; see test/vendor.sh
 test/
   prefix.sh        the end-to-end proof
   browser-test.mjs the same, in a real Chromium — the only thing that can
@@ -128,6 +133,40 @@ test/
   nginx.conf       gatekeeper's block, reproduced
   vendor.sh        fetches the wasm; run only to change version
 ```
+
+### Two things Ghostscript will not tell you
+
+Both were measured here, not taken from documentation, and both are easy to get
+wrong silently:
+
+**`-dJPEGQ` does nothing.** pdfwrite ignores it — `-dJPEGQ=10` and `-dJPEGQ=95`
+produce byte-identical output. JPEG quality is set through distiller parameters
+as a **QFactor**, where lower is better: 0.1 maximum, 0.4 high, 0.76 medium,
+1.3 low. Any recipe that sets `-dJPEGQ` is not doing what it says.
+
+**`-dColorImageResolution` is not a cutoff.** `DownsampleThreshold` defaults to
+1.5, so "200 dpi" silently means "anything above 300 dpi becomes 200" and a 250
+dpi scan sails through untouched. Email sets it to 1.0 so the number means what
+the label says; Print deliberately leaves the default, because resampling a 350
+dpi photo to 300 costs real quality and saves very little.
+
+### Counting images without asking Ghostscript
+
+`static/pdf-images.js` reads image dictionaries straight out of the PDF, before
+and after, so the result row can say *"12 images · 9 resized, 3 left as they
+were"*. It works because of one rule: an object with a stream may not live inside
+an object stream, and every image XObject has one — so image dictionaries are
+always top-level and in plain text, even in an otherwise compressed PDF 1.6.
+
+The obvious alternative, `-dPDFDEBUG`, does contain the same information but
+costs a JS callback per line of a dump of every object in the file. On a
+thousand-image brochure that is more expensive than the compression itself.
+
+The *reason* an image was left alone is deliberately not claimed. That depends on
+its effective dpi, which is pixel size divided by how large it is drawn — and the
+second half of that lives in the page's content stream as a transformation
+matrix. Reading it means interpreting the drawing program, which is a different
+project.
 
 ### The vendored Ghostscript
 
@@ -175,9 +214,22 @@ The honest costs: it needs JavaScript, a browser new enough for module workers,
 and that first 15.4 MB. A very large PDF can also exhaust a phone tab where the
 Pi would have coped — but that is the user's own tab, not everyone's gateway.
 
-Files are compressed one at a time. A second worker means a second Ghostscript
-instance resident at once, which on a phone is the difference between slow and
-killed.
+Files run in parallel across a small worker pool, sized at **70% of
+`navigator.hardwareConcurrency`** (and at most 2 where `deviceMemory` reports
+4 GB or less). One worker is one core, so a single one leaves an eight-core
+machine idling at 12% while the user waits.
+
+Capped rather than maximised, for two reasons: every worker holds its own
+Ghostscript instance, so memory bounds the pool as much as cores do; and a
+background tab that takes the whole CPU is a machine that feels broken. Work is
+handed out on demand rather than dealt evenly up front — PDFs differ wildly in
+how long they take, and a worker that drew three quick ones should pick up a
+fourth rather than idle beside one still grinding.
+
+The 15.4 MB module is compiled **once** on the main thread and the resulting
+`WebAssembly.Module` is posted to every worker. Compiling it per worker is the
+obvious way to make a pool slower than no pool. Workers are terminated after each
+batch; the compiled module is kept.
 
 ### Multiple files
 

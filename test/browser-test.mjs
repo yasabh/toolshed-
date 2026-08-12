@@ -15,33 +15,52 @@ let pass = 0, fail = 0;
 const ok = (m) => { console.log(`  \x1b[32mok\x1b[0m   ${m}`); pass++; };
 const bad = (m) => { console.log(`  \x1b[31mFAIL\x1b[0m ${m}`); fail++; };
 
-/* A PDF Ghostscript can actually shrink: one oversized image on one page. Same
-   shape as test/make_sample.py, rewritten here so this container needs no
-   python. */
-function samplePdf() {
-  const W = 1224, H = 1584;
-  const raw = Buffer.alloc(W * H * 3);
-  for (let y = 0, i = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
+/* A PDF with two images at deliberately different resolutions, on a small page
+   so the test stays quick. With a 200 dpi target and threshold 1.0:
+     - the 400 dpi image is above target -> resampled
+     - the 150 dpi image is below it     -> left exactly as it was
+   which is the mixed case the "N resized, M left as they were" line exists to
+   report, and the only one that can catch it counting wrongly. */
+const PAGE_W = 306, PAGE_H = 396;            // 4.25 x 5.5 inches
+const PAGE_DPIS = [400, 150];
+
+function imageStream(dpi) {
+  const w = Math.round((PAGE_W / 72) * dpi), h = Math.round((PAGE_H / 72) * dpi);
+  const raw = Buffer.alloc(w * h * 3);
+  for (let y = 0, i = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
       raw[i++] = (x * 7 + y * 3) & 255;
       raw[i++] = (x * 13) & 255;
       raw[i++] = (y * 11 + x) & 255;
     }
   }
-  const img = deflateSync(raw, { level: 6 });
+  return { w, h, data: deflateSync(raw, { level: 6 }) };
+}
+
+function samplePdf() {
+  const images = PAGE_DPIS.map(imageStream);
+  const n = images.length;
+  const kids = images.map((_, i) => `${3 + i * 3} 0 R`).join(" ");
   const objs = [
     Buffer.from("<< /Type /Catalog /Pages 2 0 R >>"),
-    Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-    Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " +
-      "/Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>"),
-    Buffer.from("<< /Length 44 >>\nstream\nq 612 0 0 792 0 0 cm /Im0 Do Q\nendstream"),
-    Buffer.concat([
-      Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${W} /Height ${H} ` +
-        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode ` +
-        `/Length ${img.length} >>\nstream\n`),
-      img, Buffer.from("\nendstream"),
-    ]),
+    Buffer.from(`<< /Type /Pages /Kids [${kids}] /Count ${n} >>`),
   ];
+  images.forEach((img, i) => {
+    const content = Buffer.from(
+      `q ${PAGE_W} 0 0 ${PAGE_H} 0 0 cm /Im0 Do Q\n`);
+    objs.push(
+      Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] ` +
+        `/Resources << /XObject << /Im0 ${5 + i * 3} 0 R >> >> /Contents ${4 + i * 3} 0 R >>`),
+      Buffer.concat([
+        Buffer.from(`<< /Length ${content.length} >>\nstream\n`),
+        content, Buffer.from("endstream")]),
+      Buffer.concat([
+        Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${img.w} ` +
+          `/Height ${img.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 ` +
+          `/Filter /FlateDecode /Length ${img.data.length} >>\nstream\n`),
+        img.data, Buffer.from("\nendstream")]));
+  });
+
   let out = Buffer.from("%PDF-1.7\n");
   const offsets = [];
   objs.forEach((body, i) => {
@@ -80,11 +99,14 @@ try {
 
   // Hand the file to the real <input type=file>, exactly as a user would.
   const input = await page.$("#file");
-  await input.uploadFile("/tmp/sample.pdf");
+  for (let i = 0; i < 4; i++) writeFileSync(`/tmp/sample${i}.pdf`, pdf);
+  await input.uploadFile("/tmp/sample.pdf", "/tmp/sample1.pdf",
+                         "/tmp/sample2.pdf", "/tmp/sample3.pdf");
   await page.waitForSelector(".pick", { timeout: 10000 });
-  const chip = await page.$eval(".pick .pick-name", (el) => el.textContent);
-  chip === "sample.pdf" ? ok(`the chip names the file (${chip})`)
-                        : bad(`chip says "${chip}"`);
+  const chips = await page.$$eval(".pick .pick-name", (els) => els.map((e) => e.textContent));
+  chips.length === 4 && chips[0] === "sample.pdf"
+    ? ok(`${chips.length} chips, first is ${chips[0]}`)
+    : bad(`chips: ${JSON.stringify(chips)}`);
 
   const presets = await page.$$eval(".choice input[name=quality]",
     (els) => els.map((e) => ({ id: e.value, checked: e.checked })));
@@ -94,11 +116,32 @@ try {
     ? ok("Email is the default")
     : bad(`default is ${JSON.stringify(presets)}`);
 
+  // Watch how many workers exist at the busiest moment: with four files and
+  // more than one core, a pool that silently ran one at a time would never
+  // show more than one.
+  let peakWorkers = 0;
+  const watch = setInterval(() => {
+    peakWorkers = Math.max(peakWorkers, page.workers().length);
+  }, 50);
+
   await page.click("#go");
 
   // 15.4 MB of wasm has to arrive and compile before anything happens, so this
   // is generous on purpose.
   await page.waitForSelector(".row.done, .row.failed", { timeout: 180000 });
+  await page.waitForFunction(
+    () => document.getElementById("go").textContent === "Compress",
+    { timeout: 180000 });
+  clearInterval(watch);
+
+  const cores = await page.evaluate(() => navigator.hardwareConcurrency || 4);
+  const expected = Math.max(1, Math.min(Math.floor(cores * 0.7), 4));
+  peakWorkers > 1 || cores < 3
+    ? ok(`ran ${peakWorkers} workers in parallel on ${cores} cores`)
+    : bad(`only ${peakWorkers} worker on ${cores} cores (expected ~${expected})`);
+  peakWorkers <= expected
+    ? ok(`and no more than the ${expected}-worker cap`)
+    : bad(`${peakWorkers} workers exceeds the ${expected} cap`);
 
   const failed = await page.$(".row.failed");
   if (failed) {
@@ -124,6 +167,12 @@ try {
     const name = await page.$eval(".row-get", (e) => e.getAttribute("download"));
     name === "sample_compressed_email_quality.pdf"
       ? ok(`download named ${name}`) : bad(`download named ${name}`);
+
+    // The mixed case: one image above the 200 dpi target, one below it.
+    const detail = await page.$eval(".row.done .row-detail", (e) => e.textContent);
+    detail.includes("2 images · 1 resized, 1 left as they were")
+      ? ok(`image breakdown: ${detail.split(" · ").slice(0, 2).join(" · ")}`)
+      : bad(`unexpected breakdown: ${detail}`);
   }
 
   // The other preset, on the same file, so both recipes are known to run and
@@ -132,7 +181,12 @@ try {
     (await (await fetch(document.querySelector(".row-get").href)).arrayBuffer()).byteLength);
   await page.click('.choice input[value="print"]');
   await page.click("#go");
-  await page.waitForSelector(".row.done, .row.failed", { timeout: 180000 });
+  // Wait for the whole batch, not the first row to finish: with a pool running,
+  // ".row.done" matches while other rows are still going, and reading the first
+  // .row-get then can catch a link that has no href yet.
+  await page.waitForFunction(
+    () => document.getElementById("go").textContent === "Compress",
+    { timeout: 180000 });
   const printFailed = await page.$(".row.failed");
   if (printFailed) {
     bad(`Print preset failed: ${await page.$eval(".row.failed .row-status", (e) => e.textContent)}`);
@@ -162,9 +216,7 @@ try {
   // what gets asserted here, and the successful compression above is the proof
   // that it fetched and compiled the wasm. That the wasm is served correctly
   // (application/wasm, cacheable) is a server concern and lives in prefix.sh.
-  const workers = page.workers();
-  workers.length === 1 ? ok(`compression ran in a worker (${workers.length})`)
-                       : bad(`expected 1 worker, found ${workers.length}`);
+  ok(`pool sized from ${await page.evaluate(() => navigator.hardwareConcurrency)} cores`);
   const offsite = requests.filter((r) => !r.url.startsWith(BASE.replace(/\/[^/]*$/, "")) &&
                                          !r.url.startsWith("blob:") &&
                                          !r.url.startsWith("data:"));
