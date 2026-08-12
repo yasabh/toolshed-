@@ -260,6 +260,31 @@ than dealt evenly up front — PDFs differ wildly in how long they take, and a
 worker that drew three quick ones should pick up a fourth rather than idle beside
 one still grinding.
 
+### The first run is network, not CPU
+
+The engine is fetched **when a file is picked**, not when Compress is clicked.
+Left until the click, 15.4 MB of download is the first thing that happens after
+it — seconds of waiting during which nothing is computing and the CPU sits idle,
+which is exactly what "slow, but nothing seems to be happening" is. Choosing a
+quality and moving to the button is time that was being wasted; this spends it on
+the download. Still not on page load: someone who opens the page to read it
+should not pay 15.4 MB for the privilege.
+
+**A single file uses a single core, and that is not a bug.** The pool
+parallelises across files, not within one — Ghostscript's `pdfwrite` is
+single-threaded, and one PDF is one invocation. Splitting a file by page range
+and merging would duplicate every shared image (a logo on forty pages becomes
+forty copies), so the output would grow. One file on an eight-core machine is
+~12% CPU and is going as fast as it can.
+
+### Dropping
+
+Handled on the `window`, not only on the dashed box. Landing two centimetres
+outside it is not a mistake worth punishing, and the browser's default for an
+unhandled drop is to *navigate to the file*: the page is replaced by the PDF and
+everything already picked is gone. The whole page outlines while a file is over
+it, because "drop anywhere" is useless as a secret.
+
 ### Closing the tab
 
 Results live in this page and nowhere else — that is the design, not a

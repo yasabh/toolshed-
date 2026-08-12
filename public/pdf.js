@@ -86,6 +86,26 @@ async function getModule() {
   return compiledModule;
 }
 
+/**
+ * Start fetching and compiling the engine as soon as a file is picked, rather
+ * than when Compress is clicked.
+ *
+ * It is 15.4 MB. Left until the click, that download is the first thing that
+ * happens after it — seconds of waiting on the network, during which nothing is
+ * computing and the CPU sits idle, which is exactly what "slow but nothing is
+ * happening" looks like. Picking a file, reading the quality options and moving
+ * to the button is time that was being wasted; this spends it on the download.
+ *
+ * Still not on page load: someone who opens the page to read it should not pay
+ * 15.4 MB for the privilege. Errors are swallowed because this is speculative —
+ * the real attempt in runPool() reports them.
+ */
+let prefetching = null;
+function prefetchEngine() {
+  if (!prefetching) prefetching = getModule().catch(() => { compiledModule = null; });
+  return prefetching;
+}
+
 /** One worker, doing one file at a time. */
 function spawn(module) {
   const worker = new Worker(new URL("./gs-worker.js", import.meta.url),
@@ -232,6 +252,7 @@ function renderPicks() {
 }
 
 function addFiles(files) {
+  if (files.length) prefetchEngine();
   for (const file of files) {
     // Dropping the same file twice is a slip, not a request to compress it
     // twice. Name and size alone collide across folders; lastModified does not.
@@ -246,25 +267,56 @@ function addFiles(files) {
 
 // The picker replaces the selection and a drop adds to it — which is how both
 // already behave everywhere else, so neither needs explaining.
-input.addEventListener("change", () => { picked = [...input.files]; renderPicks(); });
+input.addEventListener("change", () => {
+  picked = [...input.files];
+  if (picked.length) prefetchEngine();
+  renderPicks();
+});
 picked = [...input.files]; // a back/forward navigation can restore a selection
 renderPicks();
 
-for (const type of ["dragenter", "dragover"]) {
-  drop.addEventListener(type, (e) => { e.preventDefault(); drop.classList.add("drag"); });
-}
-for (const type of ["dragleave", "drop"]) {
-  drop.addEventListener(type, () => drop.classList.remove("drag"));
-}
 clearPicks.addEventListener("click", () => {
   picked = [];
   syncInput();
   renderPicks();
 });
 
-drop.addEventListener("drop", (e) => {
+/* Dropping is handled on the window, not only on the dashed box.
+   Landing two centimetres outside it is not a mistake worth punishing, and the
+   browser's default for an unhandled drop is to *navigate to the file*: the page
+   is replaced by the PDF and everything already picked is gone. The box stays as
+   the thing to aim at; it is no longer the only thing that catches. */
+let dragDepth = 0; // dragenter/leave fire per element, so a counter, not a flag
+
+const overWindow = (on) => {
+  document.body.classList.toggle("dragging", on);
+  drop.classList.toggle("drag", on);
+};
+
+for (const type of ["dragenter", "dragover"]) {
+  window.addEventListener(type, (e) => {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();                    // this is what claims the drop
+    e.dataTransfer.dropEffect = "copy";
+    if (type === "dragenter") dragDepth++;
+    overWindow(true);
+  });
+}
+window.addEventListener("dragleave", () => {
+  if (--dragDepth > 0) return;
+  dragDepth = 0;
+  overWindow(false);
+});
+window.addEventListener("drop", (e) => {
   e.preventDefault();
-  if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+  dragDepth = 0;
+  overWindow(false);
+  const dropped = [...(e.dataTransfer?.files || [])];
+  // A dropped folder arrives with no type and no extension; taking it would add
+  // a chip that can never compress.
+  const pdfs = dropped.filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+  if (pdfs.length) addFiles(pdfs);
+  else if (dropped.length) notice("Only PDFs can be compressed.", "error");
 });
 
 /* ---- Compress ------------------------------------------------------------- */

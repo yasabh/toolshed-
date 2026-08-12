@@ -171,6 +171,13 @@ header .spacer { flex:1; }
 .choice-detail { font-size:11.5px; line-height:1.4; color:var(--muted);
           opacity:.8; font-variant-numeric:tabular-nums; }
 
+/* While a file is over the window: the whole page is a target, so the whole page
+   has to say so — otherwise "drop anywhere" is a secret. The dashed box still
+   lights up as the place to aim. */
+body.dragging { outline:2px dashed var(--accent); outline-offset:-8px; }
+body.dragging .drop { border-color:var(--accent);
+        background:color-mix(in srgb, var(--accent) 12%, var(--field-bg)); }
+
 /* One chip per picked file. Sits below the drop box rather than inside it: the
    file input covers that box invisibly and would eat every click meant for a
    chip's remove button. */

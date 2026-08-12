@@ -108,6 +108,41 @@ try {
     ? ok(`${chips.length} chips, first is ${chips[0]}`)
     : bad(`chips: ${JSON.stringify(chips)}`);
 
+  // Dropping outside the dashed box must still land. The browser's default for
+  // an unhandled drop is to navigate to the file, which would throw the page and
+  // every picked file away — so this checks the page survived as much as that
+  // the file arrived.
+  const dropped = await page.evaluate(async () => {
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])],
+                            "dropped-far-away.pdf", { type: "application/pdf" }));
+    // The header: about as far from the drop zone as the page allows.
+    const target = document.querySelector("header");
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data }));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    return { chips: document.querySelectorAll(".pick").length,
+             stillHere: !!document.getElementById("shrink") };
+  });
+  dropped.stillHere && dropped.chips === 5
+    ? ok(`a drop outside the box is caught (${dropped.chips} chips)`)
+    : bad(`drop outside the box: ${JSON.stringify(dropped)}`);
+  // Put the queue back to the four real files for everything below.
+  await page.evaluate(() => {
+    const chip = [...document.querySelectorAll(".pick")]
+      .find((c) => c.querySelector(".pick-name").textContent === "dropped-far-away.pdf");
+    chip.querySelector(".pick-drop").click();
+  });
+
+  // The engine is fetched when a file is picked, not when Compress is clicked —
+  // otherwise the first run is seconds of waiting on the network with an idle
+  // CPU, which is what "slow but nothing is happening" actually is.
+  const prefetched = await page.evaluate(() =>
+    performance.getEntriesByType("resource").some((e) => e.name.endsWith("gs.wasm")));
+  prefetched ? ok("the engine was already fetched before Compress was clicked")
+             : bad("gs.wasm was not prefetched on pick");
+
   const presets = await page.$$eval(".choice input[name=quality]",
     (els) => els.map((e) => ({ id: e.value, checked: e.checked })));
   presets.length === 2 ? ok(`the picker offers ${presets.length} presets`)
