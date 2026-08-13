@@ -35,12 +35,36 @@ function dosStamp(date) {
 }
 
 /**
+ * Make each name unique within the archive.
+ *
+ * Two files picked from different folders can share a name, and the entries here
+ * are the *original* names — so this is not a rare case. A zip with two entries
+ * called brochure.pdf extracts to one file in most tools, silently losing the
+ * other, which is the worst way for it to go wrong.
+ */
+function uniqueNames(entries) {
+  const seen = new Map();
+  return entries.map(({ name, bytes }) => {
+    const count = seen.get(name) || 0;
+    seen.set(name, count + 1);
+    if (!count) return { name, bytes };
+    // "brochure.pdf" -> "brochure (2).pdf", the shape every file manager uses.
+    const dot = name.lastIndexOf(".");
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    return { name: `${stem} (${count + 1})${ext}`, bytes };
+  });
+}
+
+/**
  * Build a zip from [{ name, bytes }].
  *
- * Names are used as written — callers pass names they built themselves, and this
- * never touches the filesystem, so there is no path to traverse.
+ * Names are used as written apart from being made unique — callers pass names
+ * they built themselves, and this never touches the filesystem, so there is no
+ * path to traverse.
  */
-export function makeZip(entries, now = new Date()) {
+export function makeZip(rawEntries, now = new Date()) {
+  const entries = uniqueNames(rawEntries);
   const encoder = new TextEncoder();
   const { time, day } = dosStamp(now);
 

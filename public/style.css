@@ -25,10 +25,39 @@ body { margin:0; font-family:system-ui,sans-serif;
    and it moves the layout by nothing so nobody notices it moved. */
 :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
 
+/* Thin scrollbars everywhere one appears. Four scrolling areas can be on screen
+   at once — two file lists and two preview panes — and a default scrollbar is
+   nearly as wide as a file chip's remove button.
+   The thumb is mixed from --fg, so one rule covers both themes. */
+* { scrollbar-width:thin;
+    scrollbar-color:color-mix(in srgb, var(--fg) 28%, transparent) transparent; }
+
+/* Where ::-webkit-scrollbar exists it can be made thinner than the standard
+   `thin` allows — but only if `scrollbar-width` gets out of its way first: a
+   current Chrome that sees both obeys the standard property and ignores every
+   rule below. So the two are kept apart rather than stacked, and each engine
+   takes the narrower path it actually has. */
+@supports selector(::-webkit-scrollbar) {
+  * { scrollbar-width:auto; }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { border-radius:999px;
+      background:color-mix(in srgb, var(--fg) 28%, transparent); }
+  ::-webkit-scrollbar-thumb:hover {
+      background:color-mix(in srgb, var(--fg) 45%, transparent); }
+  ::-webkit-scrollbar-corner { background:transparent; }
+}
+
 /* ---- Shell: sidebar + pane ------------------------------------------------ */
-.shell { display:flex; min-height:100vh; }
+/* A definite height, not a minimum. `max-height:100%` on the workbench below can
+   only resolve against a parent whose height is actually known — with
+   min-height:100vh the chain stays content-sized and the cap never binds, so a
+   long file list pushed the whole page taller instead of scrolling inside. */
+.shell { display:flex; height:100vh; }
 
 .sidebar { flex:none; width:236px; display:flex; flex-direction:column;
+           /* Its own scroll once there are more tools than fit the window. */
+           overflow-y:auto;
            padding:14px 12px; border-right:1px solid var(--field-br);
            background:color-mix(in srgb, var(--fg) 4%, var(--bg));
            transition:width .18s; }
@@ -116,7 +145,11 @@ header .spacer { flex:1; }
 .theme-toggle[data-val="light"] .i-light,
 .theme-toggle[data-val="dark"]  .i-dark { display:block; }
 
-.content { padding:6px 20px 32px; }
+/* The pane fills the window, and the workbench fills what is left under the
+   header — which is what lets the lists inside be "as tall as there is room for"
+   without a magic number standing in for the header's height. */
+.content { flex:1; min-height:0; display:flex; flex-direction:column;
+           padding:6px 20px 20px; }
 .lede { margin:0 0 22px; font-size:14px; line-height:1.55; color:var(--muted); }
 
 /* Three panels — the controls, what is waiting, what came out — inside **one**
@@ -128,12 +161,31 @@ header .spacer { flex:1; }
    stops participating, so the row is one, two or three columns depending on how
    far through the job the user is, with nothing to declare per case.
    Stacked below 1000px, where a vertical rule has nothing to divide. */
-.workbench { display:flex; flex-direction:column; gap:20px;
+/* max-height rather than flex:1. Filling the window meant a workbench the full
+   height of the screen even with two files in it, and two hundred pixels of
+   empty panel under a short list. Sized to its content instead, it stops growing
+   when it reaches the bottom of the window — and that is the point at which the
+   lists inside start scrolling. `100%` and not a vh figure minus a guess at the
+   header: .content is already a flex column filling what the header left. */
+.workbench { max-height:100%; min-height:0;
+             display:flex; flex-direction:column; gap:20px;
              padding:20px; border-radius:14px;
              background:color-mix(in srgb, var(--fg) 4%, var(--bg)); }
-.workbench > .card { flex:1 1 0; min-width:0; padding:0; border-radius:0;
-                     background:none; }
-.empty { margin:0; padding:14px 0; font-size:13px; color:var(--muted); }
+.workbench > .card { flex:1 1 0; min-width:0; min-height:0; padding:0;
+                     border-radius:0; background:none; }
+/* The controls can be taller than a short window; they scroll rather than being
+   clipped by the panel they sit in. */
+.workbench > form.card { overflow-y:auto; }
+/* An empty list takes no space at all. Left as a flex:1 child it split the panel
+   with the empty state beside it, so the message sat in the middle of its own
+   half rather than in the middle of the panel. */
+.picks:empty, .result-list:empty { display:none; }
+
+/* Centred in the panel it stands in. Tucked under the heading it read as a
+   caption for the list that was not there; in the middle of the empty space it
+   reads as the state of the panel. */
+.empty { flex:1; min-height:0; display:grid; place-items:center; text-align:center;
+         margin:0; padding:24px 0; font-size:13px; color:var(--muted); }
 .empty[hidden] { display:none; }
 .results-bar[hidden], .queue-clear[hidden] { display:none; }
 .workbench > .card + .card { border-top:1px solid var(--field-br); padding-top:20px; }
@@ -159,12 +211,14 @@ header .spacer { flex:1; }
                cursor:pointer; background:none; color:var(--muted);
                font:500 12px system-ui,sans-serif; transition:background .15s, color .15s; }
 .queue-clear:hover { background:var(--field-bg); color:var(--fg); }
-/* The list scrolls, not the panel: twenty files must not stretch the page, and
-   the Compress button beside it must stay where it was. */
-.queue .picks { flex-direction:column; flex-wrap:nowrap; gap:6px; margin:0;
-                max-height:min(46vh, 420px); overflow-y:auto;
+/* The list takes whatever height its panel has and scrolls inside it. It used to
+   be capped at 46vh, which on a tall window left the panel two hundred pixels
+   shorter than the two beside it, with nothing in the gap. The page still never
+   grows: twenty files scroll here rather than stretching the workbench. */
+.queue .picks { flex:1; min-height:0; flex-direction:column; flex-wrap:nowrap;
+                gap:6px; margin:0; overflow-y:auto;
                 /* Room for the scrollbar so it never sits on top of a chip. */
-                padding-right:4px; }
+                padding-right:8px; }
 .queue .pick { max-width:none; }
 .queue .pick-name { flex:1; }
 
@@ -322,9 +376,11 @@ body.dragging .drop { border-color:var(--accent);
 .ghost:hover:not(:disabled) { background:var(--field-bg); }
 .ghost:disabled { opacity:.45; cursor:not-allowed; }
 .ghost svg { width:15px; height:15px; }
-.result-list { margin:0; padding:0; list-style:none; display:flex;
-               flex-direction:column; gap:8px;
-               max-height:min(52vh, 480px); overflow-y:auto; padding-right:4px; }
+/* Same as the queue's list: fills its panel, scrolls inside it, and never makes
+   the page taller. */
+.result-list { flex:1; min-height:0; margin:0; padding:0; list-style:none;
+               display:flex; flex-direction:column; gap:8px;
+               overflow-y:auto; padding-right:8px; }
 
 /* One row per file. The columns are named so the grid reads as the row does:
    name, status, the bar, and the way to get the file. It collapses to two rows
@@ -351,15 +407,6 @@ body.dragging .drop { border-color:var(--accent);
 /* Tabular figures so "6.4 MB → 1.4 MB" lines up down a column of files. */
 .row-status { grid-area:status; font-size:13px; color:var(--fg);
               font-variant-numeric:tabular-nums; }
-/* The verdict, said as a state rather than a number: green when it will send,
-   amber when it still will not. Amber and not red — nothing has gone wrong, the
-   file is simply still large. */
-.verdict { display:inline-flex; align-items:center; padding:2px 8px;
-           border-radius:999px; font:600 11px system-ui,sans-serif;
-           vertical-align:1px; white-space:nowrap; }
-.verdict.ok { background:color-mix(in srgb, #3ba55d 20%, transparent); color:#3ba55d; }
-.verdict.over { background:color-mix(in srgb, #d99e2b 22%, transparent); color:#d99e2b; }
-
 .row-detail { grid-area:detail; font-size:12px; color:var(--muted); }
 /* Spinner while the worker has it, then the outcome. One element, three
    states, so a row cannot show a tick and a spinner at once. */
@@ -430,6 +477,8 @@ body.viewing { overflow:hidden; }
 .viewer-pane h3 { margin:0; padding:8px 14px; font-size:12px; font-weight:600;
                   color:var(--muted); border-bottom:1px solid var(--field-br); }
 .viewer-pane h3 span { font-weight:400; font-variant-numeric:tabular-nums; }
+/* The recipe, not a measurement — set apart from the size beside it. */
+.pane-quality { color:var(--accent); }
 /* Both axes, and both are this page's own — which is the whole reason the panes
    can be kept together. */
 .viewer-scroll { flex:1; min-height:0; overflow:auto; background:var(--field-bg);

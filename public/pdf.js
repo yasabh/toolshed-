@@ -23,6 +23,7 @@ const viewer = document.getElementById("viewer");
 const viewerName = document.getElementById("viewerName");
 const viewerBefore = document.getElementById("viewerBefore");
 const viewerAfter = document.getElementById("viewerAfter");
+const viewerQuality = document.getElementById("viewerQuality");
 const viewerA = document.getElementById("viewerA");
 const viewerB = document.getElementById("viewerB");
 const scrollA = document.getElementById("scrollA");
@@ -41,16 +42,6 @@ const shareSelected = document.getElementById("shareSelected");
 const choices = document.getElementById("choices");
 const maxBytes = Number(form.dataset.maxBytes);
 const maxFiles = Number(form.dataset.maxFiles);
-
-/* What "small enough to email" means here.
-   The limit is the one the mail server enforces, and it is enforced on the
-   *message*, not on the file: an attachment is base64-encoded on its way out,
-   which adds about a third. So a 30 MB server limit is roughly a 21.9 MB file,
-   and comparing the file against 30 MB directly would promise delivery for
-   things that bounce. */
-const EMAIL_LIMIT_BYTES = 30 * 1024 * 1024;
-const BASE64_OVERHEAD = 4 / 3;          // 3 bytes in, 4 characters out
-const EMAIL_FILE_BUDGET = EMAIL_LIMIT_BYTES / BASE64_OVERHEAD;
 
 let objectUrls = [];
 // Every finished file, in row order: { name, bytes, row }. The row keeps the
@@ -623,9 +614,14 @@ downloadSelected.addEventListener("click", () => {
   if (!picked.length) return;
   // One file is not an archive. Zipping it would make the user unzip something
   // to get back exactly what they already had.
+  //
+  // Inside the zip the files keep their **original** names, so extracting them
+  // drops straight over the originals. A single download keeps the suffixed name
+  // instead: it lands in the downloads folder beside the file it came from, and
+  // two files called brochure.pdf there is how the wrong one gets attached.
   const blob = picked.length === 1
     ? new Blob([picked[0].bytes], { type: "application/pdf" })
-    : makeZip(picked.map(({ name, bytes }) => ({ name, bytes })));
+    : makeZip(picked.map((item) => ({ name: item.file.name, bytes: item.bytes })));
 
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -699,6 +695,9 @@ async function openPreview(item) {
   viewerName.textContent = item.file.name;
   viewerBefore.textContent = humanBytes(item.file.size);
   viewerAfter.textContent = humanBytes(item.bytes.length);
+  // Which recipe produced the right-hand side. Without it the two panes are just
+  // "before" and "after", and a difference in quality has no name to hang on.
+  viewerQuality.textContent = item.preset ? `(${item.preset} quality)` : "";
   viewer.hidden = false;
   document.body.classList.add("viewing");
   document.getElementById("viewerClose").focus();
@@ -815,7 +814,7 @@ function placeRow(row, file, out, images, preset, reused) {
   checkbox.checked = true;
   checkbox.addEventListener("change", syncSelection);
   row.classList.remove("pending");
-  finished.push({ name, bytes: out, row, file, saved: false });
+  finished.push({ name, bytes: out, row, file, preset: preset.name, saved: false });
 
   const link = row.querySelector(".row-get");
   link.href = url;
@@ -839,19 +838,11 @@ function placeRow(row, file, out, images, preset, reused) {
 
   // Ghostscript can make a file bigger — a PDF that is already one big JPEG
   // gets re-encoded for nothing. Say so instead of showing a negative saving.
-  const status = row.querySelector(".row-status");
-  status.textContent =
+  row.querySelector(".row-status").textContent =
     out.length < file.size
       ? `${humanBytes(file.size)} → ${humanBytes(out.length)} (~${Math.round((1 - out.length / file.size) * 100)}%)`
       : `${humanBytes(file.size)} → ${humanBytes(out.length)} (no smaller)`;
 
-  // The question people actually came with. "−84%" is a fact about compression;
-  // "will this send" is the answer they were looking for.
-  const fits = out.length <= EMAIL_FILE_BUDGET;
-  const verdict = document.createElement("span");
-  verdict.className = `verdict ${fits ? "ok" : "over"}`;
-  verdict.textContent = fits ? "fits in email" : "still too big to email";
-  status.append(" ", verdict);
 
   // What was actually done to the file. The image count is real — it comes from
   // Ghostscript's own object dump. How many of those were *downsampled* is not

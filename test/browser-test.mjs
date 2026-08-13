@@ -111,6 +111,40 @@ try {
     ? ok(`${chips.length} chips, first is ${chips[0]}`)
     : bad(`chips: ${JSON.stringify(chips)}`);
 
+  // Scrollbars are made as narrow as each engine allows. Headless Chromium uses
+  // overlay scrollbars, so the *width* cannot be measured here — what is checked
+  // is that the rules reached the element, and that the two mechanisms are not
+  // stacked, since Chrome obeying `scrollbar-width` silently ignores the
+  // ::-webkit- rules that are narrower.
+  const bars = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText = "overflow:auto;width:40px;height:40px";
+    probe.innerHTML = "<div style='height:200px'></div>";
+    document.body.append(probe);
+    const webkit = CSS.supports("selector(::-webkit-scrollbar)");
+    const width = getComputedStyle(probe).scrollbarWidth;
+    probe.remove();
+    return { webkit, width };
+  });
+  (bars.webkit ? bars.width === "auto" : bars.width === "thin")
+    ? ok(`scrollbars use the narrower path for this engine (webkit=${bars.webkit}, scrollbar-width=${bars.width})`)
+    : bad(`scrollbar rules: ${JSON.stringify(bars)}`);
+
+  // The empty states sit in the middle of their panels. Tucked under the heading
+  // they read as a caption for a list that is not there.
+  const centred = await page.evaluate(() => {
+    const empty = document.getElementById("resultsEmpty");
+    const panel = document.getElementById("results");
+    if (empty.hidden) return null;
+    const e = empty.getBoundingClientRect();
+    const p = panel.getBoundingClientRect();
+    return { off: Math.abs((e.top + e.height / 2) - (p.top + p.height / 2)) };
+  });
+  centred === null || centred.off < 40
+    ? ok(centred ? `the empty state is centred (${Math.round(centred.off)}px off)` 
+                 : "results already populated, centring not applicable")
+    : bad(`empty state is ${Math.round(centred.off)}px off centre`);
+
   // ---- The sidebar --------------------------------------------------------
   const sidebar = () => page.evaluate(() => {
     const vis = (sel) => {
@@ -185,6 +219,47 @@ try {
     layout.rules[0] === "0px" && layout.rules.slice(1).every((r) => r === "1px")
     ? ok(`${layout.panes} panels of equal height, divided by full-height rules`)
     : bad(`workbench: ${JSON.stringify(layout)}`);
+
+  // The workbench grows with its content and stops at the bottom of the window.
+  // Filling the window unconditionally left empty panels under short lists;
+  // never capping pushed the page taller with every file added.
+  const capped = await page.evaluate(() => {
+    const bench = document.querySelector(".workbench");
+    const list = document.querySelector(".queue .picks");
+    return {
+      bench: Math.round(bench.getBoundingClientRect().height),
+      viewport: window.innerHeight,
+      listScrolls: list.scrollHeight > list.clientHeight,
+      pageScrolls: document.documentElement.scrollHeight > window.innerHeight,
+    };
+  });
+  capped.bench <= capped.viewport && !capped.pageScrolls
+    ? ok(`the workbench stops at the window (${capped.bench}px of ${capped.viewport}px)`)
+    : bad(`workbench height: ${JSON.stringify(capped)}`);
+
+  // Each list fills the panel it is in and scrolls inside it. Capped heights
+  // left a panel short of the two beside it with nothing in the gap; letting
+  // them grow instead would push the page taller with every file added.
+  const filled = await page.evaluate(() => {
+    const h = (el) => (el ? Math.round(el.getBoundingClientRect().height) : 0);
+    // Whichever of the list or its empty state is on screen is the thing that
+    // should be filling the panel — an empty list is display:none.
+    const body = (panel, listSel, emptySel) => {
+      const list = document.querySelector(listSel);
+      const empty = document.querySelector(emptySel);
+      const shown = list && getComputedStyle(list).display !== "none" ? list : empty;
+      return h(document.querySelector(panel)) - h(shown);
+    };
+    return {
+      queueGap: body("#queue", ".queue .picks", "#picksEmpty"),
+      resultsGap: body("#results", ".result-list", "#resultsEmpty"),
+      pageScrolls: document.documentElement.scrollHeight > window.innerHeight,
+    };
+  });
+  // The only slack should be the panel's own heading, not a dead band below.
+  filled.queueGap < 90 && filled.resultsGap < 90 && !filled.pageScrolls
+    ? ok(`lists fill their panels (${filled.queueGap}px / ${filled.resultsGap}px of heading)`)
+    : bad(`panel fill: ${JSON.stringify(filled)}`);
 
   // Dropping outside the dashed box must still land. The browser's default for
   // an unhandled drop is to navigate to the file, which would throw the page and
@@ -341,13 +416,6 @@ try {
       ? ok(`download named ${name}`)
       : bad(`download named ${JSON.stringify(name)}, expected "sample_compressed_email_quality.pdf"`);
 
-    // The question the tool exists to answer, stated as a verdict rather than a
-    // percentage. The sample compresses to well under the budget.
-    const verdict = await page.$eval(".row.done .verdict",
-      (e) => ({ text: e.textContent, ok: e.classList.contains("ok") }));
-    verdict.ok && verdict.text === "fits in email"
-      ? ok(`the row answers the real question: "${verdict.text}"`)
-      : bad(`verdict: ${JSON.stringify(verdict)}`);
 
     // The mixed case: one image above the 200 dpi target, one below it.
     const detail = await page.$eval(".row.done .row-detail", (e) => e.textContent);
@@ -488,9 +556,11 @@ try {
   const zip = await page.evaluate(async () => {
     const { makeZip } = await import("./static/zip.js");
     const enc = new TextEncoder();
+    // Two entries sharing a name, which is what happens when files are picked
+    // from different folders — entries inside the zip keep their originals.
     const blob = makeZip([
       { name: "a.pdf", bytes: enc.encode("%PDF-1.7 one") },
-      { name: "b.pdf", bytes: enc.encode("%PDF-1.7 two") },
+      { name: "a.pdf", bytes: enc.encode("%PDF-1.7 two") },
     ]);
     const b = new Uint8Array(await blob.arrayBuffer());
     const view = new DataView(b.buffer);
@@ -500,11 +570,16 @@ try {
       // End-of-central-directory is the last 22 bytes when there is no comment.
       endSig: view.getUint32(b.length - 22, true) === 0x06054b50,
       entries: view.getUint16(b.length - 22 + 10, true),
+      // The second must have been renamed, or extracting drops one of them.
+      names: new TextDecoder("latin1").decode(b).includes("a (2).pdf"),
     };
   });
   zip.sig === "PK" && zip.endSig && zip.entries === 2
     ? ok(`zip is well-formed: PK, ${zip.entries} entries, ${zip.size} bytes`)
     : bad(`zip malformed: ${JSON.stringify(zip)}`);
+  zip.names
+    ? ok("a repeated name becomes \"a (2).pdf\" rather than overwriting")
+    : bad("duplicate names were left to collide inside the zip");
 
   // ---- Preview -------------------------------------------------------------
   await page.evaluate(() => document.querySelector(".row-preview").click());
@@ -540,6 +615,10 @@ try {
       inkA: a.length ? ink(a[0]) : 0,
       inkB: b.length ? ink(b[0]) : 0,
       sizes: [...document.querySelectorAll(".viewer-pane h3 span")].map((e) => e.textContent),
+      // The right-hand pane names the recipe that produced it.
+      quality: document.getElementById("viewerQuality").textContent,
+      headings: [...document.querySelectorAll(".viewer-pane h3")]
+        .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
     };
   });
   preview.open && preview.pagesA === 2 && preview.pagesB === 2
@@ -548,6 +627,9 @@ try {
   preview.inkA > 0 && preview.inkB > 0
     ? ok(`pages are actually painted (${preview.inkA} / ${preview.inkB} ink pixels)`)
     : bad(`blank canvases: ${JSON.stringify(preview)}`);
+  /^\(.+ quality\)$/.test(preview.quality)
+    ? ok(`the compressed pane names its recipe: "${preview.headings[1]}"`)
+    : bad(`quality label: ${JSON.stringify(preview.quality)}`);
 
   // Vertical sync — the whole reason the renderer was swapped. Proportional, so
   // it holds even though the two documents are different lengths.
