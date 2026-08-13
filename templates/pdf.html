@@ -140,7 +140,9 @@ your browser, not on the server.</p></noscript>
    so its licence has to be reachable from where it is offered. -->
 <p class="colophon">Uses
   <a target="blank" href="https://github.com/sharevb/ghostscript-wasm-esm">ghostscript-wasm-esm</a>,
-  <a target="blank" href="{{prefix}}/static/vendor/LICENSE">AGPL-3.0</a>.</p>
+  <a target="blank" href="{{prefix}}/static/vendor/LICENSE">AGPL-3.0</a>, and
+  <a target="blank" href="https://github.com/mozilla/pdf.js">PDF.js</a>,
+  <a target="blank" href="{{prefix}}/static/vendor/LICENSE-pdfjs">Apache-2.0</a>.</p>
 <!-- Side by side, original left and compressed right, each in the browser's own
      PDF viewer. The zoom control drives both by rewriting the #zoom fragment
      they were opened with. -->
@@ -152,22 +154,24 @@ your browser, not on the server.</p></noscript>
       <button type="button" data-zoom="150">150%</button>
       <button type="button" data-zoom="200">200%</button>
       <button type="button" data-zoom="300">300%</button>
+      <button type="button" data-zoom="400">400%</button>
+      <button type="button" data-zoom="500">500%</button>
     </div>
     <button type="button" class="viewer-close" id="viewerClose" aria-label="Close preview">✕</button>
   </div>
   <div class="viewer-panes">
     <section class="viewer-pane">
       <h3>Original <span id="viewerBefore"></span></h3>
-      <div class="viewer-scroll"><iframe id="viewerA" title="Original PDF"></iframe></div>
+      <div class="viewer-scroll" id="scrollA"><div class="pv-doc" id="viewerA"></div></div>
     </section>
     <section class="viewer-pane">
       <h3>Compressed <span id="viewerAfter"></span></h3>
-      <div class="viewer-scroll"><iframe id="viewerB" title="Compressed PDF"></iframe></div>
+      <div class="viewer-scroll" id="scrollB"><div class="pv-doc" id="viewerB"></div></div>
     </section>
   </div>
-  <p class="viewer-note">Both panes are the browser's own PDF viewer, so what you
-  see here is what the person receiving the file will see. Each pane also keeps
-  its own controls.</p>
+  <p class="viewer-note">Rendered by PDF.js — Mozilla's engine, the one Firefox
+  ships — so this is a second opinion on the file rather than a replay of the
+  Ghostscript that produced it. Scroll and zoom are shared between both panes.</p>
 </div>
 
 <script type="module" src="{{prefix}}/static/pdf.js"></script>

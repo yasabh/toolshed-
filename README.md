@@ -129,6 +129,7 @@ public/
   pdf-images.js  finds image XObjects by reading the PDF bytes
   zip.js         a stored-only ZIP writer, ~90 lines, for "Download selected"
   gs-worker.js   Ghostscript, off the main thread
+  preview.js     PDF.js rendering the before/after panes
   vendor/        ghostscript-wasm-esm, committed; see test/vendor.sh
 test/
   prefix.sh        the end-to-end proof
@@ -173,16 +174,49 @@ second half of that lives in the page's content stream as a transformation
 matrix. Reading it means interpreting the drawing program, which is a different
 project.
 
+### The preview, and why it is not the browser's own viewer
+
+The side-by-side preview started with two `<iframe>`s holding the browser's
+built-in PDF viewer — deliberately, because an independent renderer is a second
+opinion on the file rather than a replay of the Ghostscript that made it.
+
+It had to be abandoned, and the reason is worth recording: **that viewer is a
+separate, cross-origin document.** Its scroll position can be neither read nor
+set, so two panes can never be kept together. Zoom fared no better —
+`#zoom=` is ignored for `blob:` URLs, and the workaround of resizing the frame to
+the zoom put the bottom of the page out of reach. Every project that does this
+successfully reaches the same conclusion: to control the scrolling you have to
+own the renderer.
+
+So the panes are rendered by **PDF.js**, loaded only when a preview is first
+opened. Most of the second opinion survives: it is Mozilla's engine, the one
+Firefox ships, and it shares no code with Ghostscript. What is lost is that it is
+not *this* user's viewer.
+
+Three bugs found by measuring rather than by reading, all of which looked fine in
+one pane and only showed up in two:
+
+- **A grid column's default minimum is its content.** `1fr 1fr` let a page zoomed
+  to 300% widen its own column and squeeze the other, so the two documents
+  stopped being shown at comparable sizes. `minmax(0, 1fr)` fixes it.
+- **A redraw requested while one is running was dropped, not queued.** Whichever
+  document was still rendering when the zoom was clicked kept its old scale for
+  ever, because nothing asked again.
+- **Resizing a canvas clears it**, so zooming blanked every visible page for as
+  long as the redraw took. Pages are drawn into a new canvas and swapped in.
+
 ### The vendored Ghostscript
 
-`app/static/vendor/` holds `ghostscript-wasm-esm@1.0.1` — **15.4 MB**, committed
+`public/vendor/` holds `ghostscript-wasm-esm@1.0.1` (**15.4 MB**) and
+`pdfjs-dist@6.2.108` (**1.6 MB**, minified build and worker only), committed
 rather than installed at build time. There is no npm in this image and no build
 step to add one to, and a CDN at runtime would mean every person compressing a
 PDF tells jsdelivr they are doing it, which defeats the point. `test/vendor.sh`
 re-fetches it and records checksums in `VENDOR.txt`.
 
-It is **AGPL-3.0**, like Ghostscript itself. Serving it to a browser is
-distribution, so the licence ships beside it and is linked from the tool's page.
+Ghostscript's build is **AGPL-3.0**; PDF.js is **Apache-2.0**. Serving either to
+a browser is distribution, so both licences ship beside them and are linked from
+the tool's page.
 
 Adding a tool is: write `lib/tools/<id>.js` exporting a `TOOL`, add a template
 fragment, list it in `lib/registry.js`. Sidebar, route and `<h1>` all come from

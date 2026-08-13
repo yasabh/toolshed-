@@ -500,83 +500,122 @@ try {
 
   // ---- Preview -------------------------------------------------------------
   await page.evaluate(() => document.querySelector(".row-preview").click());
+  // Rendering is real work in a worker, so it is waited for rather than assumed
+  // — and waited for in *both* panes. A count across the two was satisfied by
+  // the first pane alone, so the second was measured while still empty.
+  const painted = (sel) => {
+    const c = document.querySelector(sel);
+    if (!c || !c.width) return false;
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) return true;
+    }
+    return false;
+  };
+  await page.waitForFunction(
+    `(${painted})("#viewerA canvas") && (${painted})("#viewerB canvas")`,
+    { timeout: 60000 });
+
   const preview = await page.evaluate(() => {
-    const frames = [...document.querySelectorAll(".viewer-pane iframe")];
+    const ink = (canvas) => {
+      const d = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] < 250 || d[i+1] < 250 || d[i+2] < 250) n++;
+      return n;
+    };
+    const a = [...document.querySelectorAll("#viewerA canvas")];
+    const b = [...document.querySelectorAll("#viewerB canvas")];
     return {
       open: !document.getElementById("viewer").hidden,
-      panes: frames.length,
-      // Both panes point at a blob in this page — nothing was uploaded to be
-      // previewed, and no third-party viewer is involved.
-      blobs: frames.every((f) => f.src.startsWith("blob:")),
-      // Left is the original, right the compressed: they must not be the same
-      // document shown twice.
-      distinct: new Set(frames.map((f) => f.src.split("#")[0])).size === 2,
-      // The viewer's own toolbar and thumbnail sidebar are turned off: two sets
-      // of chrome over two documents is most of the window spent on furniture.
-      chromeOff: frames.every((f) => f.src.includes("toolbar=0") &&
-                                     f.src.includes("navpanes=0")),
-      fitH: frames.every((f) => f.src.includes("view=FitH")),
+      pagesA: a.length, pagesB: b.length,
+      // Blank canvases would pass a "two panes exist" check and show nothing.
+      inkA: a.length ? ink(a[0]) : 0,
+      inkB: b.length ? ink(b[0]) : 0,
       sizes: [...document.querySelectorAll(".viewer-pane h3 span")].map((e) => e.textContent),
     };
   });
-  preview.open && preview.panes === 2 && preview.blobs && preview.distinct &&
-    preview.fitH && preview.chromeOff
-    ? ok(`preview opens two panes on separate blobs (${preview.sizes.join(" vs ")})`)
+  preview.open && preview.pagesA === 2 && preview.pagesB === 2
+    ? ok(`preview renders both documents (${preview.sizes.join(" vs ")})`)
     : bad(`preview: ${JSON.stringify(preview)}`);
-  // One control, both panes — the reason it sits between them. Measured as the
-  // rendered width of each frame, not as a URL fragment: `#zoom=` is ignored for
-  // blob: URLs, which is exactly the bug this replaced.
-  const widthsAt = (zoom) => page.evaluate(async (z) => {
-    document.querySelector(`.viewer-zoom [data-zoom="${z}"]`).click();
-    await new Promise((r) => requestAnimationFrame(r));
-    const panes = [...document.querySelectorAll(".viewer-scroll")];
-    const frames = [...document.querySelectorAll(".viewer-pane iframe")];
-    return {
-      frames: frames.map((f) => Math.round(f.getBoundingClientRect().width)),
-      panes: panes.map((p) => Math.round(p.getBoundingClientRect().width)),
-      scrolls: panes.map((p) => p.scrollWidth > p.clientWidth),
-      pressed: document.querySelector(`.viewer-zoom [data-zoom="${z}"]`).getAttribute("aria-pressed"),
-    };
-  }, zoom);
+  preview.inkA > 0 && preview.inkB > 0
+    ? ok(`pages are actually painted (${preview.inkA} / ${preview.inkB} ink pixels)`)
+    : bad(`blank canvases: ${JSON.stringify(preview)}`);
 
-  const fit = await widthsAt("fit");
-  const at200 = await widthsAt("200");
-  fit.frames[0] === fit.frames[1] && at200.frames[0] === at200.frames[1]
-    ? ok("both panes are always the same width as each other")
-    : bad(`widths fit=${fit.frames} 200=${at200.frames}`);
-  at200.frames[0] > fit.frames[0] * 1.9 && at200.scrolls.every(Boolean)
-    ? ok(`200% really widens both panes (${fit.frames[0]}px → ${at200.frames[0]}px, scrollable)`)
-    : bad(`200% did not zoom: ${JSON.stringify(at200)}`);
-  at200.pressed === "true"
-    ? ok("and the control shows which zoom is active")
-    : bad("zoom button not marked pressed");
-
-  // Comparing two documents means looking at the same part of both, and two
-  // independent viewers are linked by nothing on their own.
-  const synced = await page.evaluate(async () => {
-    const [a, b] = [...document.querySelectorAll(".viewer-scroll")];
-    a.scrollTop = 240;
+  // Vertical sync — the whole reason the renderer was swapped. Proportional, so
+  // it holds even though the two documents are different lengths.
+  const scrolled = await page.evaluate(async () => {
+    const [a, b] = [document.getElementById("scrollA"), document.getElementById("scrollB")];
+    a.scrollTop = Math.round((a.scrollHeight - a.clientHeight) * 0.5);
     a.dispatchEvent(new Event("scroll"));
-    await new Promise((r) => setTimeout(r, 60));
-    const followed = b.scrollTop;
-    // And back the other way — without the echo guard the two would fight.
-    b.scrollTop = 90;
-    b.dispatchEvent(new Event("scroll"));
-    await new Promise((r) => setTimeout(r, 60));
-    return { followed, back: a.scrollTop, settled: b.scrollTop };
+    await new Promise((r) => setTimeout(r, 80));
+    const roomB = b.scrollHeight - b.clientHeight;
+    return { fraction: roomB > 0 ? b.scrollTop / roomB : -1, moved: b.scrollTop > 0 };
   });
-  synced.followed === 240 && synced.back === 90 && synced.settled === 90
-    ? ok("scrolling either pane moves the other, without them fighting")
-    : bad(`scroll sync: ${JSON.stringify(synced)}`);
+  scrolled.moved && Math.abs(scrolled.fraction - 0.5) < 0.05
+    ? ok(`scrolling one pane scrolls the other (landed at ${scrolled.fraction.toFixed(2)})`)
+    : bad(`vertical sync: ${JSON.stringify(scrolled)}`);
 
-  // Escape closes it, and the blobs go with it rather than accumulating.
+  // And back the other way, without the two fighting each other.
+  const backwards = await page.evaluate(async () => {
+    const [a, b] = [document.getElementById("scrollA"), document.getElementById("scrollB")];
+    b.scrollTop = 0;
+    b.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 80));
+    return { a: a.scrollTop, b: b.scrollTop };
+  });
+  backwards.a === 0 && backwards.b === 0
+    ? ok("and scrolling it back moves the first one too")
+    : bad(`reverse sync: ${JSON.stringify(backwards)}`);
+
+  // The panes must stay the same width as each other whatever is in them, or
+  // the two documents are no longer shown at comparable sizes.
+  const even = await page.evaluate(() => [
+    document.getElementById("scrollA").clientWidth,
+    document.getElementById("scrollB").clientWidth,
+  ]);
+  Math.abs(even[0] - even[1]) <= 1
+    ? ok(`both panes are the same width (${even[0]}px)`)
+    : bad(`panes differ: ${JSON.stringify(even)}`);
+
+  // Zoom re-renders both at a larger scale — the canvases themselves grow.
+  const atFit = await page.evaluate(() =>
+    document.querySelector("#viewerA canvas").width);
+  await page.evaluate(() => document.querySelector('.viewer-zoom [data-zoom="300"]').click());
+  // Both panes, not just the first: a redraw is asynchronous, and measuring the
+  // second before its render lands reads the old width and fails a working app.
+  const grew = await page.waitForFunction(
+    (w) => {
+      const a = document.querySelector("#viewerA canvas")?.width || 0;
+      const b = document.querySelector("#viewerB canvas")?.width || 0;
+      return a > w && b > w ? { a, b } : false;
+    },
+    { timeout: 45000, polling: 200 }, atFit)
+    .then((handle) => handle.jsonValue())
+    .catch(() => null);
+
+  if (!grew) {
+    const now = await page.evaluate(() => ({
+      a: [...document.querySelectorAll("#viewerA canvas")].map((c) => c.width),
+      b: [...document.querySelectorAll("#viewerB canvas")].map((c) => c.width),
+      panes: [document.getElementById("scrollA").clientWidth,
+              document.getElementById("scrollB").clientWidth],
+    }));
+    bad(`300% did not reach both panes: fit=${atFit} now=${JSON.stringify(now)}`);
+  } else {
+    const pressed = await page.$eval('.viewer-zoom [data-zoom="300"]',
+      (e) => e.getAttribute("aria-pressed"));
+    pressed === "true"
+      ? ok(`300% re-renders both larger (${atFit}px → ${grew.a}/${grew.b}px)`)
+      : bad("zoom button not marked pressed");
+  }
+
   await page.keyboard.press("Escape");
   const closed = await page.evaluate(() => ({
     hidden: document.getElementById("viewer").hidden,
-    srcs: [...document.querySelectorAll(".viewer-pane iframe")].map((f) => f.getAttribute("src")),
+    canvases: document.querySelectorAll("#viewerA canvas, #viewerB canvas").length,
   }));
-  closed.hidden && closed.srcs.every((v) => v === null)
-    ? ok("Escape closes the preview and releases both blobs")
+  closed.hidden && closed.canvases === 0
+    ? ok("Escape closes the preview and tears both documents down")
     : bad(`after Escape: ${JSON.stringify(closed)}`);
 
   // ---- Nothing is lost silently --------------------------------------------

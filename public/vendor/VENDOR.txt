@@ -1,8 +1,12 @@
-ghostscript-wasm-esm@1.0.1
-https://registry.npmjs.org/ghostscript-wasm-esm/-/ghostscript-wasm-esm-1.0.1.tgz
-AGPL-3.0 — see LICENSE in this directory
+ghostscript-wasm-esm@1.0.1  AGPL-3.0  (LICENSE)
+  https://registry.npmjs.org/ghostscript-wasm-esm/-/ghostscript-wasm-esm-1.0.1.tgz
+pdfjs-dist@6.2.108  Apache-2.0  (LICENSE-pdfjs)
+  https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.2.108.tgz
 
 d03632bd52aa79bbd081b026e325fb726954d1a55c79538169da7dd846c43c60  gs.mjs
 b07b853d459b3aafe6e1247aaaf9a6386dd107f4f215a3bd7bb3d4272a212930  gs.wasm
 546deb1e8cca0bb91dae3bba5f50c535fbe8764e5528399ffaca6070cb4b7ad2  browser.js
 796c9fd9fe0da3a3397a48e86cc3162c2f7ae5261ea128b4416ed86a49b5044b  LICENSE
+e0be3863c23c8af2305b16548febd58e7f8874a460253317d7771cddbc1c0f6d  pdf.min.mjs
+0613f41490dd6aaceed7a93fbbd38c85e6d6aa60474b6588c6e7709cfbe18cb3  pdf.worker.min.mjs
+0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594  LICENSE-pdfjs

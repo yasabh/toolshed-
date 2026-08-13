@@ -71,3 +71,4 @@ export function compareImages(before, after) {
 
   return { total: after.length, resized: after.length - kept, kept };
 }
+

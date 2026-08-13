@@ -8,6 +8,7 @@
 import { notice, humanBytes } from "./app.js";
 import { PRESETS, DEFAULT_PRESET, presetById } from "./presets.js";
 import { makeZip } from "./zip.js";
+import { renderDocument, rescale, destroy } from "./preview.js";
 
 const form = document.getElementById("shrink");
 const input = document.getElementById("file");
@@ -24,6 +25,8 @@ const viewerBefore = document.getElementById("viewerBefore");
 const viewerAfter = document.getElementById("viewerAfter");
 const viewerA = document.getElementById("viewerA");
 const viewerB = document.getElementById("viewerB");
+const scrollA = document.getElementById("scrollA");
+const scrollB = document.getElementById("scrollB");
 const clearPicks = document.getElementById("clearPicks");
 const pickTemplate = document.getElementById("pickTemplate");
 const go = document.getElementById("go");
@@ -655,82 +658,80 @@ if (navigator.canShare?.({ files: [new File([new Uint8Array(1)], "a.pdf", { type
 }
 
 /* ---- Preview --------------------------------------------------------------
-   Both files in the browser's own PDF viewer, side by side.
+   Both files side by side, rendered by PDF.js.
 
-   Not rendered by the Ghostscript that produced them, which was the first
-   instinct and the wrong one: a quirk of that renderer would show up identically
-   on both sides and cancel itself out, hiding the very damage this exists to
-   reveal. The browser's viewer is an independent second opinion, and it is the
-   same kind of viewer the person receiving the file will use.
+   The browser's own viewer was tried first and had to be abandoned: it is a
+   separate, cross-origin document, so its scroll position can be neither read
+   nor set and the two panes could never be kept together. Owning the renderer is
+   the only way to own the scrolling — which is the same conclusion every project
+   that does this has reached.
 
-   The cost, stated on the page rather than hidden: a built-in viewer cannot be
-   driven from outside, so the zoom control is a hint passed in the URL fragment.
-   Chrome and Firefox honour it; others keep their own controls, which still
-   work. */
-let previewUrls = [];
+   What is kept is the second opinion: PDF.js is Mozilla's engine and shares no
+   code with the Ghostscript that produced the file, so a difference on screen is
+   still a difference in the documents. What is lost is that it is not this
+   user's own viewer. */
+let previewDocs = { a: null, b: null };
+let currentZoom = "fit";
 
-function openPreview(item) {
+const ZOOMS = { fit: null, 150: 1.5, 200: 2, 300: 3, 400: 4, 500: 5 };
+
+/** "Fit" is a scale, not a mode: whatever makes the first page fill the pane. */
+function fitScale(state, pane) {
+  const [first] = state.pages;
+  if (!first) return 1;
+  const natural = first.page.getViewport({ scale: 1 }).width;
+  // A little room so the page is not flush against the pane's edges.
+  return Math.max(0.1, (pane.clientWidth - 24) / natural);
+}
+
+async function openPreview(item) {
   closePreview();
-  previewUrls = [
-    URL.createObjectURL(item.file),
-    URL.createObjectURL(new Blob([item.bytes], { type: "application/pdf" })),
-  ];
-  // toolbar=0 and navpanes=0 hide the viewer's own chrome — the sidebar of page
-  // thumbnails and the toolbar above it. Two toolbars stacked over two documents
-  // is most of the screen spent on furniture, and this window has its own zoom
-  // and its own close button already. Honoured by Chrome and Edge; Firefox keeps
-  // its toolbar, which is its choice to make and does no harm.
-  // FitH so each viewer starts by fitting its pane's width; the zoom control
-  // then works by changing what that width is.
-  const params = "#toolbar=0&navpanes=0&scrollbar=0&view=FitH";
-  viewerA.src = previewUrls[0] + params;
-  viewerB.src = previewUrls[1] + params;
   viewerName.textContent = item.file.name;
   viewerBefore.textContent = humanBytes(item.file.size);
   viewerAfter.textContent = humanBytes(item.bytes.length);
-  setZoom("fit");
   viewer.hidden = false;
   document.body.classList.add("viewing");
   document.getElementById("viewerClose").focus();
+
+  // Each side is opened on its own. One document failing to parse should leave
+  // the other readable and say which one broke, rather than closing the window
+  // and blaming both — and a shared try block hid exactly that: a failure after
+  // the pages were already on screen left the pane looking rendered while the
+  // handle needed to zoom or scroll it was quietly never assigned.
+  const load = async (host, bytes, which) => {
+    try {
+      return await renderDocument(host, bytes, 1);
+    } catch (err) {
+      console.error(`preview: ${which} failed to render`, err);
+      notice(`The ${which} could not be displayed.`, "error");
+      return null;
+    }
+  };
+
+  // Sequential, not parallel: two documents parsing at once on a laptop makes
+  // the first one appear later than it needs to.
+  const original = new Uint8Array(await item.file.arrayBuffer());
+  previewDocs.a = await load(viewerA, original, "original");
+  previewDocs.b = await load(viewerB, item.bytes, "compressed file");
+  setZoom(currentZoom);
 }
 
 function closePreview() {
   viewer.hidden = true;
   document.body.classList.remove("viewing");
-  // Blanked before revoking: a frame still pointing at a dead blob shows the
-  // browser's own error page for a moment.
-  viewerA.removeAttribute("src");
-  viewerB.removeAttribute("src");
-  for (const url of previewUrls) URL.revokeObjectURL(url);
-  previewUrls = [];
+  destroy(previewDocs.a);
+  destroy(previewDocs.b);
+  previewDocs = { a: null, b: null };
 }
 
-let currentZoom = 100;
-
-/**
- * Zoom both panes.
- *
- * Not by asking the viewer. `#zoom=` is documented, and for a `blob:` URL both
- * Chrome and Firefox ignore it — the first attempt here passed that fragment and
- * nothing moved. A built-in viewer cannot be driven from outside, so the thing
- * that *can* be changed is the box it fits its page into: the iframe is made
- * wider than its pane and the pane scrolls. The viewer re-fits to the new width
- * and re-renders the page at that size, so the text stays sharp instead of being
- * a magnified bitmap — which is what scaling the iframe with a CSS transform
- * would have given.
- */
 function setZoom(zoom) {
   currentZoom = zoom;
-  for (const frame of [viewerA, viewerB]) {
-    if (zoom === "fit") {
-      frame.style.width = "100%";
-      frame.style.height = "100%";
-    } else {
-      frame.style.width = `${zoom}%`;
-      // Height follows width, or a zoomed page is cropped to the pane instead of
-      // becoming scrollable.
-      frame.style.height = `${zoom}%`;
-    }
+  for (const [state, pane] of [[previewDocs.a, scrollA], [previewDocs.b, scrollB]]) {
+    if (!state) continue;
+    // Both panes are scaled by the same rule, but "fit" is measured per pane —
+    // if the two documents differ in page size, matching their *scales* would
+    // leave one of them not fitting.
+    rescale(state, zoom === "fit" ? fitScale(state, pane) : ZOOMS[zoom]);
   }
   for (const button of viewer.querySelectorAll(".viewer-zoom button")) {
     button.setAttribute("aria-pressed", String(String(button.dataset.zoom) === String(zoom)));
@@ -746,22 +747,26 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !viewer.hidden) closePreview();
 });
 
-/* Scrolling one pane scrolls the other.
-   The panes are two independent PDF viewers, so nothing links them by itself —
-   and comparing two documents means looking at the same part of both. The guard
-   is what stops the echo: moving pane A moves pane B, whose scroll event would
-   otherwise move A back, and the two would fight each other to a standstill. */
+/* Scrolling one pane scrolls the other, both ways.
+   Possible at all only because the panes are this page's own elements now.
+   Proportional rather than absolute: the two documents can be different heights
+   — a compressed file is often shorter — and matching raw pixel offsets would
+   drift further apart the longer the document. The guard stops the echo: moving
+   A moves B, whose scroll event would otherwise move A back, and the two would
+   fight to a standstill. */
 let syncingScroll = false;
 
-for (const [from, to] of [[viewerA, viewerB], [viewerB, viewerA]]) {
-  from.parentElement.addEventListener("scroll", () => {
+for (const [from, to] of [[scrollA, scrollB], [scrollB, scrollA]]) {
+  from.addEventListener("scroll", () => {
     if (syncingScroll) return;
     syncingScroll = true;
-    to.parentElement.scrollTop = from.parentElement.scrollTop;
-    to.parentElement.scrollLeft = from.parentElement.scrollLeft;
-    // Released on the next frame rather than immediately: the assignment above
-    // fires the other pane's scroll event asynchronously, and clearing the flag
-    // in the same tick would let it through.
+    const room = from.scrollHeight - from.clientHeight;
+    const fraction = room > 0 ? from.scrollTop / room : 0;
+    to.scrollTop = fraction * (to.scrollHeight - to.clientHeight);
+    to.scrollLeft = from.scrollLeft;
+    // Released on the next frame: the assignment above fires the other pane's
+    // scroll event asynchronously, and clearing the flag in the same tick would
+    // let it straight through.
     requestAnimationFrame(() => { syncingScroll = false; });
   });
 }
