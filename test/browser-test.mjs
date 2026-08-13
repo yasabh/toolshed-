@@ -341,6 +341,14 @@ try {
       ? ok(`download named ${name}`)
       : bad(`download named ${JSON.stringify(name)}, expected "sample_compressed_email_quality.pdf"`);
 
+    // The question the tool exists to answer, stated as a verdict rather than a
+    // percentage. The sample compresses to well under the budget.
+    const verdict = await page.$eval(".row.done .verdict",
+      (e) => ({ text: e.textContent, ok: e.classList.contains("ok") }));
+    verdict.ok && verdict.text === "fits in email"
+      ? ok(`the row answers the real question: "${verdict.text}"`)
+      : bad(`verdict: ${JSON.stringify(verdict)}`);
+
     // The mixed case: one image above the 200 dpi target, one below it.
     const detail = await page.$eval(".row.done .row-detail", (e) => e.textContent);
     detail.includes("1/2 images resized") && detail.includes("Email quality")

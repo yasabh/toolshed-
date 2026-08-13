@@ -42,6 +42,16 @@ const choices = document.getElementById("choices");
 const maxBytes = Number(form.dataset.maxBytes);
 const maxFiles = Number(form.dataset.maxFiles);
 
+/* What "small enough to email" means here.
+   The limit is the one the mail server enforces, and it is enforced on the
+   *message*, not on the file: an attachment is base64-encoded on its way out,
+   which adds about a third. So a 30 MB server limit is roughly a 21.9 MB file,
+   and comparing the file against 30 MB directly would promise delivery for
+   things that bounce. */
+const EMAIL_LIMIT_BYTES = 30 * 1024 * 1024;
+const BASE64_OVERHEAD = 4 / 3;          // 3 bytes in, 4 characters out
+const EMAIL_FILE_BUDGET = EMAIL_LIMIT_BYTES / BASE64_OVERHEAD;
+
 let objectUrls = [];
 // Every finished file, in row order: { name, bytes, row }. The row keeps the
 // checkbox, so this is the only place that has to know what "selected" means.
@@ -829,10 +839,19 @@ function placeRow(row, file, out, images, preset, reused) {
 
   // Ghostscript can make a file bigger — a PDF that is already one big JPEG
   // gets re-encoded for nothing. Say so instead of showing a negative saving.
-  row.querySelector(".row-status").textContent =
+  const status = row.querySelector(".row-status");
+  status.textContent =
     out.length < file.size
       ? `${humanBytes(file.size)} → ${humanBytes(out.length)} (~${Math.round((1 - out.length / file.size) * 100)}%)`
       : `${humanBytes(file.size)} → ${humanBytes(out.length)} (no smaller)`;
+
+  // The question people actually came with. "−84%" is a fact about compression;
+  // "will this send" is the answer they were looking for.
+  const fits = out.length <= EMAIL_FILE_BUDGET;
+  const verdict = document.createElement("span");
+  verdict.className = `verdict ${fits ? "ok" : "over"}`;
+  verdict.textContent = fits ? "fits in email" : "still too big to email";
+  status.append(" ", verdict);
 
   // What was actually done to the file. The image count is real — it comes from
   // Ghostscript's own object dump. How many of those were *downsampled* is not
