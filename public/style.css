@@ -477,8 +477,9 @@ body.viewing { overflow:hidden; }
 .viewer-pane h3 { margin:0; padding:8px 14px; font-size:12px; font-weight:600;
                   color:var(--muted); border-bottom:1px solid var(--field-br); }
 .viewer-pane h3 span { font-weight:400; font-variant-numeric:tabular-nums; }
-/* The recipe, not a measurement — set apart from the size beside it. */
-.pane-quality { color:var(--accent); }
+/* The recipe, not a measurement — set apart from the size beside it by style
+   rather than by brackets, which a preset name may already contain. */
+.pane-quality { color:var(--accent); font-style:italic; }
 /* Both axes, and both are this page's own — which is the whole reason the panes
    can be kept together. */
 .viewer-scroll { flex:1; min-height:0; overflow:auto; background:var(--field-bg);

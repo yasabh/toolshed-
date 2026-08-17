@@ -694,10 +694,16 @@ async function openPreview(item) {
   closePreview();
   viewerName.textContent = item.file.name;
   viewerBefore.textContent = humanBytes(item.file.size);
-  viewerAfter.textContent = humanBytes(item.bytes.length);
-  // Which recipe produced the right-hand side. Without it the two panes are just
-  // "before" and "after", and a difference in quality has no name to hang on.
-  viewerQuality.textContent = item.preset ? `(${item.preset} quality)` : "";
+  // Size and saving together: the heading is where the two panes are compared,
+  // so the number that says how much came off belongs beside the one it came
+  // off. Italic rather than brackets for the recipe — a preset can carry its own
+  // brackets ("Print (Brochure)") and nesting them reads as a typo.
+  const saved = item.file.size
+    ? Math.round((1 - item.bytes.length / item.file.size) * 100) : 0;
+  viewerAfter.textContent = saved > 0
+    ? `${humanBytes(item.bytes.length)} (~${saved}%)`
+    : `${humanBytes(item.bytes.length)} (no smaller)`;
+  viewerQuality.textContent = item.preset ? `${item.preset} quality` : "";
   viewer.hidden = false;
   document.body.classList.add("viewing");
   document.getElementById("viewerClose").focus();

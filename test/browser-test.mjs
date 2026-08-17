@@ -627,9 +627,15 @@ try {
   preview.inkA > 0 && preview.inkB > 0
     ? ok(`pages are actually painted (${preview.inkA} / ${preview.inkB} ink pixels)`)
     : bad(`blank canvases: ${JSON.stringify(preview)}`);
-  /^\(.+ quality\)$/.test(preview.quality)
-    ? ok(`the compressed pane names its recipe: "${preview.headings[1]}"`)
-    : bad(`quality label: ${JSON.stringify(preview.quality)}`);
+  // The recipe is named without brackets — a preset can carry its own — and the
+  // saving sits beside the size it applies to.
+  // Not *wrapped* in brackets — the preset name may contain its own, which is
+  // the whole reason the label is set apart by italics instead.
+  const wrapped = preview.quality.startsWith("(") && preview.quality.endsWith(")");
+  /\bquality$/.test(preview.quality) && !wrapped &&
+    /\((~\d+%|no smaller)\)$/.test(preview.headings[1])
+    ? ok(`the compressed pane reads "${preview.headings[1]}"`)
+    : bad(`heading: ${JSON.stringify(preview.headings)}`);
 
   // Vertical sync — the whole reason the renderer was swapped. Proportional, so
   // it holds even though the two documents are different lengths.
